@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import { readCodex } from './adapters/codex.mjs'
+import { readClaudeCode } from './adapters/claude.mjs'
 import { readOpenCode, streamOpenCodeEvents } from './adapters/opencode.mjs'
 import { classifyFailure } from './safety.mjs'
 
@@ -20,8 +21,8 @@ function json(response, status, body) {
 }
 
 async function buildSnapshot() {
-  const results = await Promise.allSettled([readCodex(), readOpenCode()])
-  const names = ['codex', 'opencode']
+  const results = await Promise.allSettled([readCodex(), readOpenCode(), readClaudeCode()])
+  const names = ['codex', 'opencode', 'claude-code']
   const providers = {}
   const diagnostics = []
   const records = []

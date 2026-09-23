@@ -1,4 +1,4 @@
-export type Provider = 'codex' | 'opencode' | 'manual'
+export type Provider = 'codex' | 'opencode' | 'claude-code' | 'manual'
 export type WorkerStatus = 'active' | 'waiting' | 'needs-input' | 'review' | 'failed' | 'complete' | 'unknown'
 export type TelemetryMode = 'disconnected' | 'loading' | 'live' | 'partial' | 'error' | 'simulation'
 /** Client-side source selector, independent of the adapter's reported TelemetryMode. */
@@ -58,14 +58,14 @@ export type DistrictId =
 export interface TelemetryResponse {
   mode: Exclude<TelemetryMode, 'loading' | 'simulation'>
   records: AgentRecord[]
-  providers: Record<'codex' | 'opencode', { connected: boolean; message: string }>
+  providers: Record<'codex' | 'opencode' | 'claude-code', { connected: boolean; message: string }>
   diagnostics: AdapterDiagnostic[]
   fetchedAt: string
   message?: string
 }
 
 export interface AdapterDiagnostic {
-  provider: 'codex' | 'opencode'
+  provider: 'codex' | 'opencode' | 'claude-code'
   state: 'connected' | 'limited' | 'disconnected' | 'error'
   adapter: string
   endpoint: string

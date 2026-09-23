@@ -14,7 +14,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. `npm run dev` starts Vite and the read-only telemetry proxy, both bound to loopback. The proxy discovers the installed `codex` and `opencode` CLIs without provider passwords. Choose **Explore simulation** only when you intentionally want clearly labelled synthetic data.
+Open `http://127.0.0.1:5173`. `npm run dev` starts Vite and the read-only telemetry proxy, both bound to loopback. The proxy discovers the installed `codex` and `opencode` CLIs without provider passwords, and reads Claude Code's local session metadata directly. Choose **Explore simulation** only when you intentionally want clearly labelled synthetic data.
 
 Production bundle:
 
@@ -64,9 +64,11 @@ The scene background is the **Villages** 3D map from [`andrinr/villages`](https:
 ## Telemetry architecture
 
 ```text
-codex app-server --stdio (persisted metadata) ---------+
-                                                       +-> Node metadata proxy -> normalized records -> React
-opencode api reads + filtered event subscription ------+
+codex app-server --stdio (persisted metadata) -----------+
+                                                         |
+opencode api reads + filtered event subscription -------+-> Node metadata proxy -> normalized records -> React
+                                                         |
+claude-code local JSONL (metadata fields only) ---------+
 ```
 
 Every record is normalized to:
@@ -84,8 +86,8 @@ The browser receives only safe metadata. It never receives server passwords, pro
 
 The adapter uses the installed CLI's authenticated read operations:
 
-- `opencode api session.list`
-- `opencode api session.list --param parentID=<session-id>` for direct children
+- `opencode api session.list --param directory=<COMMAND_CENTER_SCOPE_CWD>` when a scope is configured. Pushing the scope down as a directory filter keeps the read to the scoped project and avoids the oversized unscoped listing; without a scope the adapter falls back to the plain `session.list` and reports a truncated payload as a read failure.
+- `opencode api session.list --param parentID=<session-id> --param directory=<COMMAND_CENTER_SCOPE_CWD>` for direct children. The same scope filter is pushed to the child read, and the final inventory is re-checked against the scope. Child reads are capped at 64 roots and run at most four at a time; results are cached by parent id and updated timestamp for about a minute so a 15-second poll does not respawn every child read, while a changed parent, an expired entry, or any failed read is never served from cache. Reaching the cap or failing a read is reported as a `limited` diagnostic, and a failed child read never removes its parent root from the inventory.
 - `opencode api event.subscribe`; only allowlisted event **types** trigger a metadata refresh.
 
 No prompt, message, todo text, tool input, or tool output is requested. Parent relationships appear only when OpenCode supplies `parentID`; otherwise the UI says that the parent was not reported.
@@ -135,10 +137,27 @@ Important limitation: a separately spawned app-server can read persisted thread 
 
 The [official Codex app-server protocol](https://developers.openai.com/docs/app-server) documents the JSONL handshake, `thread/list`, runtime status fields, and child/ancestor filters used here.
 
+### Claude Code adapter
+
+Claude Code stores one local JSONL transcript per session under `~/.claude/projects/<encoded cwd>/`. The adapter parses those local files, but extracts and forwards only a bounded set of metadata fields:
+
+- It narrows the scan to the scoped project directory plus worktrees whose encoded directory name shares the scope's basename, then verifies each transcript's own `cwd` is the exact scope or a matching-basename worktree under `~/.codex/worktrees`. An unrelated same-named project is skipped rather than mis-attributed.
+- Per transcript it uses only the line type, `sessionId`, `cwd`, chat-turn timestamps, and an assistant line's `message.model`. The whole JSONL line is parsed locally, but prompt text, message bodies, tool arguments, and tool output are never used, stored, or forwarded.
+- A file with no real user or assistant turn (for example a system/cost-only record) is skipped rather than shown as a chat.
+- Status is always `unknown`: a persisted transcript proves a past conversation, not a running process, so no live-active state is inferred. The real model and the last user/assistant turn timestamp are preserved when the transcript supplies them; system, queue, and cost lines cannot move the updated time.
+- The title is a neutral workspace/task slug plus a short session id. Only a folder name is used, never a full local path.
+- Reads are bounded: at most `TELEMETRY_LIST_LIMIT` of the freshest files, a 12 MB per-file cap, and four concurrent reads. Results are cached by file mtime and size because the client polls every 15 seconds, so an unchanged transcript is never re-read.
+- A skipped, unreadable, oversized, or malformed transcript is surfaced as a `limited` diagnostic instead of silently disappearing. With no `COMMAND_CENTER_SCOPE_CWD`, the adapter stays disconnected rather than scanning the whole home directory.
+- `~/.claude/history.jsonl` is deliberately not read, because it can contain prompt text.
+- No subscription allowance, quota, or model id is inferred.
+
+Only metadata fields are used or forwarded, and the adapter is read-only and kept separate from the live runtime adapters; it does not claim that a Claude Code process is running. Its records flow through the existing roster, inspector, diagnostics, and scene with the shared provider label; no Claude-specific scene styling is added yet.
+
 ## Security boundary
 
 - Both servers bind to `127.0.0.1`.
 - Provider credentials are handled by the already-authenticated local CLIs and never enter the Vite bundle.
+- The Claude Code adapter parses local transcript lines but forwards only metadata fields: prompt/message text, tool output, and full local paths never cross the loopback boundary.
 - There are no task mutation, prompt submission, model execution, permission-response, share, delete, or write routes.
 - No provider response is logged. Error messages contain only the provider/path/status boundary.
 - OpenCode allowance is displayed only if a documented API supplies it. This adapter deliberately does not infer it from token activity.
@@ -149,7 +168,9 @@ The [official Codex app-server protocol](https://developers.openai.com/docs/app-
 - `src/components/WorldScene.tsx` — Villages 3D map, agent markers, hover data, and state motion.
 - `src/components/OperationsPanel.tsx` — accessible roster, detail view, and connection states.
 - `src/hooks/useTelemetry.ts` — connection state, explicit simulation, filtered refresh events.
-- `server/adapters/` — provider reads and normalization.
+- `server/adapters/codex.mjs` — Codex app-server reads.
+- `server/adapters/opencode.mjs` — OpenCode CLI reads and event subscription.
+- `server/adapters/claude.mjs` — read-only Claude Code local transcript metadata.
 - `server/safety.mjs` — loopback enforcement and safe metadata helpers.
 
 ## Repair status (unverified, 2026-09-23)

@@ -13,6 +13,12 @@ const statusIcon: Record<WorkerStatus, typeof CheckCircle> = {
   active: HardHat, waiting: Compass, 'needs-input': Flag, review: ShieldCheck, failed: WarningCircle, complete: CheckCircle, unknown: CloudSlash,
 }
 
+// Friendly provider names for the roster and diagnostics. The provider id in the
+// data contract stays exact; only the display text is expanded.
+const providerLabel: Record<AgentRecord['provider'], string> = {
+  codex: 'Codex', opencode: 'OpenCode', 'claude-code': 'Claude Code', manual: 'Manual',
+}
+
 function relativeTime(value: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000))
   if (seconds < 60) return `${seconds}s ago`
@@ -51,7 +57,7 @@ function RecordRow({ record, selected, staged, onSelect }: { record: AgentRecord
       <span className="record-copy">
         <span className="record-heading"><strong>{record.title}</strong><small>{relativeTime(record.updatedAt)}{record.stale ? ' · stale' : record.historical ? ' · past' : ''}</small></span>
         <span className="record-role">
-          <span className="record-provider">{record.provider} · {record.model}</span>
+          <span className="record-provider">{providerLabel[record.provider]} · {record.model}</span>
           {/* Shown hall for a staged worker is age-based scenery, so it is labelled as a
               staging location rather than a role. Provider/model above stays exact. */}
           <span className="record-hall">{districtMeta[record.district].name}{staged ? ' · staging' : ''}</span>
@@ -157,7 +163,7 @@ export function OperationsPanel({ mode, sourceMode, records, stagedIds, message,
             <div className="diagnostic-row" key={item.provider}>
               <span className={`diagnostic-state ${stale ? 'stale' : item.state}`} aria-hidden="true" />
               <div>
-                <div className="diagnostic-title"><strong>{item.provider}</strong><span>{stale ? `last known: ${item.state}` : item.state}</span></div>
+                <div className="diagnostic-title"><strong>{providerLabel[item.provider]}</strong><span>{stale ? `last known: ${item.state}` : item.state}</span></div>
                 <code>{item.endpoint}</code>
                 <p>{item.recordsReceived} records · {item.adapter}{item.lastSuccessfulRefresh ? ` · ${stale ? 'last successful read' : 'last read'} ${relativeTime(item.lastSuccessfulRefresh)}` : ''}</p>
                 {(item.failureReason || item.limitation) && <small>{item.failureReason || item.limitation}</small>}

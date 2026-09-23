@@ -5,6 +5,34 @@ import { classifyFailure, isoTime, normalizeStatus, safeActivity } from '../safe
 
 const execFileAsync = promisify(execFile)
 
+// Child discovery is bounded in both breadth and concurrency: an unbounded
+// Promise.all over every root session can spawn a CLI process per root and, on a
+// large project, overrun the client's 15-second poll. Roots themselves are always
+// retained; only the child read is capped, and a cap is reported as a limitation.
+const CHILD_READ_LIMIT = 64
+const CHILD_READ_CONCURRENCY = 4
+// Child listings change far more slowly than the 15-second client poll, so a short
+// cache keyed by parent id and the parent's updated timestamp avoids respawning up
+// to 64 CLI processes on every poll. A changed parent timestamp, an expired entry,
+// or any failed read is never served from the cache.
+const CHILD_CACHE_TTL_MS = 60_000
+const childCache = new Map()
+
+async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length)
+  let next = 0
+  const run = async () => {
+    while (next < items.length) {
+      const index = next
+      next += 1
+      results[index] = await worker(items[index])
+    }
+  }
+  const workers = Math.min(Math.max(1, limit), items.length)
+  await Promise.all(Array.from({ length: workers }, run))
+  return results
+}
+
 async function operation(name, params = {}) {
   const args = ['api', name]
   for (const [key, value] of Object.entries(params)) args.push('--param', `${key}=${value}`)
@@ -74,23 +102,51 @@ function inScope(session) {
 
 export async function readOpenCode() {
   const startedAt = new Date().toISOString()
+  const scope = process.env.COMMAND_CENTER_SCOPE_CWD
   try {
-    const sessions = await operation('session.list')
+    // The unscoped session listing can exceed the CLI's output handling on a busy
+    // machine, so a configured scope is pushed down as a directory filter. This is
+    // the same authenticated read operation, only narrower. Without a scope the
+    // read stays as before and any truncated payload surfaces as an error below.
+    const sessions = await operation('session.list', scope ? { directory: scope } : {})
     // Retention is wider than the client's freshness window so a project's older
     // sessions still appear; the client marks them historical.
     const retentionMinutes = Number(process.env.TELEMETRY_RETENTION_MINUTES || 10_080)
     const cutoff = Date.now() - retentionMinutes * 60_000
-    const roots = sessions.filter((session) => inScope(session) && Number(session.time?.updated || 0) >= cutoff)
+    const roots = sessions
+      .filter((session) => inScope(session) && Number(session.time?.updated || 0) >= cutoff)
+      .sort((a, b) => Number(b.time?.updated || 0) - Number(a.time?.updated || 0))
+    const childRoots = roots.slice(0, CHILD_READ_LIMIT)
+    const skippedChildRoots = roots.length - childRoots.length
     let failedChildReads = 0
-    const childBatches = await Promise.all(roots.map(async (session) => {
+    const now = Date.now()
+    const childBatches = await mapLimit(childRoots, CHILD_READ_CONCURRENCY, async (session) => {
+      const key = String(session.id)
+      const stamp = Number(session.time?.updated || 0)
+      const cached = childCache.get(key)
+      if (cached && cached.stamp === stamp && cached.expiresAt > now) return cached.children
       try {
-        return await operation('session.list', { parentID: session.id })
+        // The directory filter is passed to the child read as well, so a child
+        // listing can never grow back into the oversized unscoped read.
+        const children = await operation('session.list', scope
+          ? { parentID: session.id, directory: scope }
+          : { parentID: session.id })
+        childCache.set(key, { stamp, expiresAt: Date.now() + CHILD_CACHE_TTL_MS, children })
+        return children
       } catch {
         failedChildReads += 1
+        // A failed read is never cached, so a transient failure is retried on the
+        // next poll instead of being hidden behind a stale success.
+        childCache.delete(key)
+        // A failed child read never removes its parent root from the inventory.
         return []
       }
-    }))
+    })
+    // Drop cached children for roots that are no longer in scope.
+    const liveRootIds = new Set(roots.map((session) => String(session.id)))
+    for (const key of childCache.keys()) if (!liveRootIds.has(key)) childCache.delete(key)
     const unique = [...new Map([...roots, ...childBatches.flat()].map((session) => [session.id, session])).values()]
+      .filter((session) => inScope(session))
 
     const records = unique.map((session) => {
       const model = getModel(session)
@@ -114,16 +170,17 @@ export async function readOpenCode() {
       }
     })
 
-    const limited = failedChildReads > 0
     const limitations = []
-    if (limited) limitations.push(`${failedChildReads} child session read${failedChildReads === 1 ? '' : 's'} failed; the child inventory may be incomplete.`)
+    if (failedChildReads > 0) limitations.push(`${failedChildReads} child session read${failedChildReads === 1 ? '' : 's'} failed; the child inventory may be incomplete.`)
+    if (skippedChildRoots > 0) limitations.push(`${skippedChildRoots} root session${skippedChildRoots === 1 ? '' : 's'} were not checked for children because the bounded child-read cap was reached.`)
     limitations.push('Subscription allowance is not exposed; no quota is estimated.')
+    const limited = failedChildReads > 0 || skippedChildRoots > 0
 
     return {
       connected: true,
       limited,
       message: limited
-        ? `${records.length} session metadata records read; ${failedChildReads} child read${failedChildReads === 1 ? '' : 's'} failed, so the child inventory is incomplete.`
+        ? `${records.length} session metadata records read; ${limitations[0]}`
         : `${records.length} current session metadata records read through the authenticated CLI.`,
       records,
       diagnostic: {

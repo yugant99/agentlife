@@ -5,6 +5,7 @@ import type { AdapterDiagnostic, AgentRecord, SourceMode, TelemetryMode, Telemet
 const EMPTY_PROVIDERS = {
   codex: { connected: false, message: 'Not connected' },
   opencode: { connected: false, message: 'Not connected' },
+  'claude-code': { connected: false, message: 'Not connected' },
 }
 
 // Records older than this window are real past sessions, not current activity. The

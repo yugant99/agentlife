@@ -142,7 +142,7 @@ const MODEL_BRANDS: Record<string, string> = {
   deepseek: 'DeepSeek', opencode: 'OpenCode', codex: 'Codex', gpt: 'GPT', grok: 'Grok',
   claude: 'Claude', llama: 'Llama', mistral: 'Mistral', qwen: 'Qwen', gemini: 'Gemini',
 }
-const PROVIDER_LABEL: Record<AgentRecord['provider'], string> = { codex: 'Codex', opencode: 'OpenCode', manual: 'Manual' }
+const PROVIDER_LABEL: Record<AgentRecord['provider'], string> = { codex: 'Codex', opencode: 'OpenCode', 'claude-code': 'Claude Code', manual: 'Manual' }
 
 function collapse(value: string) {
   return (value || '').replace(/\s+/g, ' ').trim()
