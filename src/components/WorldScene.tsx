@@ -121,6 +121,41 @@ function assignChores(records: AgentRecord[]): Map<string, ChoreKind> {
   return assigned
 }
 
+// --- Scenic walkers ----------------------------------------------------------
+// A live roster often reports zero active workers, which would leave the whole
+// village standing still. A small, deterministic set of non-stale, non-chore
+// workers is chosen to walk the existing continuous route as scenery, so the scene
+// stays alive even when nothing is active. This is decorative selection only: it
+// never changes a record, a status, or any active/attention count, and it is
+// bounded to a few workers in different districts so the village never looks like
+// a marching crowd. Past and unknown real records are eligible when needed.
+const SCENIC_WALKER_LIMIT = 3
+const WALKER_STATUS_RANK: Record<WorkerStatus, number> = {
+  active: 0, waiting: 1, review: 1, 'needs-input': 1, failed: 1, complete: 2, unknown: 3,
+}
+
+function selectScenicWalkers(records: AgentRecord[], chores: Map<string, ChoreKind>): Set<string> {
+  const walkers = new Set<string>()
+  const byDistrict = new Map<DistrictId, AgentRecord[]>()
+  for (const record of records) {
+    // Stale snapshots stay neutral, and a worker already posed at a chore must not
+    // drift off to walk.
+    if (record.stale || chores.has(record.id)) continue
+    const pool = byDistrict.get(record.district)
+    if (pool) pool.push(record)
+    else byDistrict.set(record.district, [record])
+  }
+  const byId = (a: AgentRecord, b: AgentRecord) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  for (const id of Object.keys(districtMeta) as DistrictId[]) {
+    if (walkers.size >= SCENIC_WALKER_LIMIT) break
+    const pool = byDistrict.get(id)
+    if (!pool || pool.length === 0) continue
+    pool.sort((a, b) => WALKER_STATUS_RANK[a.status] - WALKER_STATUS_RANK[b.status] || byId(a, b))
+    walkers.add(pool[0].id)
+  }
+  return walkers
+}
+
 // --- Hover marker text -------------------------------------------------------
 const NAME_MAX = 14
 const TASK_MAX = 30
@@ -326,6 +361,23 @@ function applyWalk(node: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], 
   arms[1].rotation.x = stride * 0.65
 }
 
+/**
+ * The shared continuous walk used by both an active worker and a scenic walker. The
+ * route is a closed ellipse whose entry and exit ease from the resting arc, so a
+ * walker glides in and out of motion instead of snapping.
+ */
+function applyWalkRoute(walkNode: THREE.Group, bodyNode: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], t: number, cadence: number) {
+  const progress = (((t * cadence) / WALK_SECONDS) % 1 + 1) % 1
+  // Ease in from the resting arc and back out so entry and exit to rest glide.
+  const local = progress < ENTER_FRACTION ? progress / ENTER_FRACTION : progress > 1 - ENTER_FRACTION ? (1 - progress) / ENTER_FRACTION : 1
+  const cx = -ROUTE_ENTRY_X * (1 - local)
+  const cz = -ROUTE_ENTRY_Z * (1 - local)
+  applyWalk(walkNode, legs, arms, progress, cx, cz)
+  bodyNode.position.y = Math.abs(Math.sin(progress * Math.PI * 2 * 7)) * 0.04
+  bodyNode.rotation.x = 0
+  bodyNode.rotation.z = Math.sin(progress * Math.PI * 2 * 7) * 0.02
+}
+
 /** A slow bend-and-rise inspect gesture with both arms raised forward. */
 function applyInspect(body: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], t: number, phase: number) {
   const lean = Math.sin(t * 0.9 + phase) * 0.16
@@ -438,75 +490,213 @@ function WaterStation() {
   )
 }
 
-const SMOKE_COUNT = 5
+// --- Village hearth ----------------------------------------------------------
+// One persistent cooking station: hearth stones, a tripod that holds an elevated
+// cauldron, flames below the pot, and smoke that starts above it. It is mounted
+// once in the village rather than per worker, so the fire reads even when no
+// cooking chore is staffed, and there is never a second pot. Fire and smoke only
+// animate transforms and material opacity; under reduced motion they hold a still
+// frame because their initial transforms are already a sensible pose.
+const HEARTH_STONE = '#6f6a60'
+const HEARTH_ASH = '#494439'
+const POT_METAL = '#33383c'
+const POT_RIM = '#4c5257'
+const STEW = '#8a5a2b'
+const FLAME_OUTER = '#ef8f2e'
+const FLAME_MID = '#f7c14a'
+const FLAME_INNER = '#fbe9a6'
+const SMOKE_COLOR = '#d8d6cf'
 
-function Fire({ reducedMotion }: { reducedMotion: boolean }) {
-  const ref = useRef<THREE.Mesh>(null)
-  useFrame(({ clock }) => {
-    if (!ref.current || reducedMotion) return
-    const t = clock.elapsedTime
-    ref.current.scale.setScalar(0.9 + Math.sin(t * 9) * 0.12)
-    ref.current.rotation.y = t * 1.5
-  })
-  return (
-    <mesh ref={ref} position={[0, 0.2, 0]}>
-      <coneGeometry args={[0.16, 0.34, 7]} />
-      <meshBasicMaterial color="#f0913a" transparent opacity={0.85} depthWrite={false} />
-    </mesh>
-  )
-}
+const SMOKE_PUFFS = 5
+const SMOKE_BASE_Y = 1.25
+const SMOKE_RISE = 1.05
+const STONE_ANGLES = [0, 1.05, 2.09, 3.14, 4.19, 5.24]
+const TRIPOD_ANGLES = [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3]
 
-function Smoke({ reducedMotion }: { reducedMotion: boolean }) {
+function HearthFlames({ reducedMotion }: { reducedMotion: boolean }) {
   const group = useRef<THREE.Group>(null)
-  const phases = useMemo(() => Array.from({ length: SMOKE_COUNT }, (_, index) => index / SMOKE_COUNT), [])
   useFrame(({ clock }) => {
     const node = group.current
     if (!node || reducedMotion) return
     const t = clock.elapsedTime
     node.children.forEach((child, index) => {
-      const progress = ((t * 0.25 + phases[index]) % 1 + 1) % 1
-      child.position.set(Math.sin(progress * Math.PI * 2 + index) * 0.12 * progress, 0.52 + progress * 1.0, 0)
-      child.scale.setScalar(0.12 + progress * 0.34)
+      // Only scale and spin: the flames stay anchored to the ash bed under the pot.
+      const flicker = 0.84 + Math.sin(t * (7 + index * 1.7) + index) * 0.16
+      child.scale.y = flicker
+      child.rotation.y = t * (1.2 + index * 0.4)
+    })
+  })
+  return (
+    <group ref={group}>
+      <mesh position={[0, 0.42, 0]}>
+        <coneGeometry args={[0.2, 0.5, 7]} />
+        <meshBasicMaterial color={FLAME_OUTER} transparent opacity={0.92} depthWrite={false} />
+      </mesh>
+      <mesh position={[0.05, 0.36, 0.04]}>
+        <coneGeometry args={[0.13, 0.4, 6]} />
+        <meshBasicMaterial color={FLAME_MID} transparent opacity={0.95} depthWrite={false} />
+      </mesh>
+      <mesh position={[-0.04, 0.3, -0.03]}>
+        <coneGeometry args={[0.09, 0.3, 6]} />
+        <meshBasicMaterial color={FLAME_INNER} transparent opacity={0.95} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
+function HearthSmoke({ reducedMotion }: { reducedMotion: boolean }) {
+  const group = useRef<THREE.Group>(null)
+  const phases = useMemo(() => Array.from({ length: SMOKE_PUFFS }, (_, index) => index / SMOKE_PUFFS), [])
+  useFrame(({ clock }) => {
+    const node = group.current
+    if (!node || reducedMotion) return
+    const t = clock.elapsedTime
+    node.children.forEach((child, index) => {
+      const progress = ((t * 0.22 + phases[index]) % 1 + 1) % 1
+      // The puff path starts above the pot rim and drifts up, never through the fire.
+      child.position.set(Math.sin(progress * Math.PI * 2 + index) * 0.16 * progress, SMOKE_BASE_Y + progress * SMOKE_RISE, 0)
+      child.scale.setScalar(0.11 + progress * 0.4)
       const material = (child as THREE.Mesh).material as THREE.Material | undefined
-      if (material) material.opacity = 0.32 * (1 - progress)
+      if (material) material.opacity = 0.34 * (1 - progress)
     })
   })
   return (
     <group ref={group}>
       {phases.map((phase, index) => (
-        <mesh key={index} position={[0, 0.52 + phase, 0]}>
+        <mesh key={index} position={[0, SMOKE_BASE_Y + phase * SMOKE_RISE, 0]} scale={0.11 + phase * 0.4}>
           <sphereGeometry args={[1, 6, 6]} />
-          <meshBasicMaterial color="#dcdcd6" transparent opacity={0.3} depthWrite={false} />
+          <meshBasicMaterial color={SMOKE_COLOR} transparent opacity={0.34 * (1 - phase)} depthWrite={false} />
         </mesh>
       ))}
     </group>
   )
 }
 
-function CookingStation({ reducedMotion }: { reducedMotion: boolean }) {
+function CookingHearth({ position, reducedMotion }: { position: [number, number, number]; reducedMotion: boolean }) {
   return (
-    <group position={[0, 0, 0.66]}>
-      {/* A ring of hearth stones. */}
-      <mesh position={[0, 0.08, 0]} receiveShadow>
-        <cylinderGeometry args={[0.34, 0.4, 0.16, 7]} />
-        <meshStandardMaterial color="#6f6a60" roughness={0.95} />
+    <group position={position}>
+      {/* Ash bed with a ring of chunky hearth stones. */}
+      <mesh position={[0, 0.09, 0]} receiveShadow>
+        <cylinderGeometry args={[0.5, 0.56, 0.18, 8]} />
+        <meshStandardMaterial color={HEARTH_ASH} roughness={0.98} />
       </mesh>
-      {/* The cauldron, a low-poly half sphere. */}
-      <mesh position={[0, 0.34, 0]} castShadow>
-        <sphereGeometry args={[0.28, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.62]} />
-        <meshStandardMaterial color="#3a3f42" metalness={0.5} roughness={0.5} />
+      {STONE_ANGLES.map((angle, index) => (
+        <mesh key={angle} position={[Math.cos(angle) * 0.46, 0.2, Math.sin(angle) * 0.46]} rotation={[0.1 * index, angle, 0]} castShadow receiveShadow>
+          <dodecahedronGeometry args={[0.16, 0]} />
+          <meshStandardMaterial color={HEARTH_STONE} roughness={0.95} />
+        </mesh>
+      ))}
+      {/* A tripod leans in to a ring that carries the elevated pot. */}
+      {TRIPOD_ANGLES.map((angle) => (
+        <group key={angle} rotation={[0, angle, 0]}>
+          <mesh position={[0, 0.5, 0.4]} rotation={[-0.2, 0, 0]} castShadow>
+            <boxGeometry args={[0.06, 1.02, 0.06]} />
+            <meshStandardMaterial color={WOOD} roughness={0.9} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[0, 1.0, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.3, 0.03, 6, 14]} />
+        <meshStandardMaterial color={IRON} metalness={0.4} roughness={0.5} />
       </mesh>
-      <Fire reducedMotion={reducedMotion} />
-      <Smoke reducedMotion={reducedMotion} />
+      {/* The cauldron sits in the ring, clearly above the flames. It is a bottom
+          hemisphere opened upward, drawn double-sided so the stew reads from above. */}
+      <mesh position={[0, 1.08, 0]} castShadow>
+        <sphereGeometry args={[0.32, 14, 10, 0, Math.PI * 2, Math.PI * 0.5, Math.PI * 0.5]} />
+        <meshStandardMaterial color={POT_METAL} metalness={0.55} roughness={0.45} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, 1.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.32, 0.03, 6, 14]} />
+        <meshStandardMaterial color={POT_RIM} metalness={0.5} roughness={0.45} />
+      </mesh>
+      <mesh position={[0, 1.04, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.28, 12]} />
+        <meshStandardMaterial color={STEW} roughness={0.55} />
+      </mesh>
+      <HearthFlames reducedMotion={reducedMotion} />
+      <HearthSmoke reducedMotion={reducedMotion} />
+      {/* A small, range-limited glow. No shadow, so it costs almost nothing. */}
+      <pointLight position={[0, 0.7, 0]} color="#ff9b3d" intensity={4} distance={4} decay={2} />
     </group>
   )
 }
 
-function ChoreStation({ chore, reducedMotion }: { chore?: ChoreKind; reducedMotion: boolean }) {
+function ChoreStation({ chore }: { chore?: ChoreKind }) {
   if (chore === 'woodcutting') return <ChoppingStation />
   if (chore === 'water') return <WaterStation />
-  if (chore === 'cooking') return <CookingStation reducedMotion={reducedMotion} />
+  // Cooking is the single persistent village hearth, never a per-worker prop.
   return null
+}
+
+// --- Viking huts -------------------------------------------------------------
+// Two fixed, low-poly huts placed behind the Forge and Dock worker rows. They are
+// static geometry with no per-frame work: warm timber walls, a contrasting steep
+// thatch roof, a dark door and a lit window. The roof is two slanted slabs that
+// meet at a ridge beam, so the silhouette reads as chunky and playful rather than
+// as another map building.
+const HUT_TIMBER = '#7a5233'
+const HUT_TIMBER_DARK = '#5f3f27'
+const HUT_THATCH = '#b9935a'
+const HUT_THATCH_DARK = '#9c7a45'
+const HUT_DOOR = '#3f2c1c'
+const HUT_WINDOW = '#f0b45a'
+const HUT_ROOF_ANGLE = 0.65
+
+// Fixed offsets from two district anchors. Both huts sit behind the worker rows
+// (-z) and clear of the slot grid and the hall label, so nothing is covered.
+const HUT_PLACEMENTS: { district: DistrictId; offset: [number, number]; rotation: number }[] = [
+  { district: 'forge', offset: [3.1, -2.4], rotation: 0.25 },
+  { district: 'dock', offset: [-3.1, -2.4], rotation: -0.35 },
+]
+// The single hearth lives in the Great Hall, offset clear of the worker columns
+// and the walk route that extends beyond them.
+const HEARTH_DISTRICT: DistrictId = 'great-hall'
+const HEARTH_OFFSET: [number, number] = [3.3, 0.6]
+// A cook assigned at the Great Hall stands beside the hearth, aligned in x and
+// facing +z toward it, outside the normal three-column slot grid. A cooking chore
+// that falls back to another district keeps its ordinary slot instead.
+const COOK_POSITION: [number, number, number] = [HEARTH_OFFSET[0], 0, HEARTH_OFFSET[1] - 1.3]
+
+function VikingHut({ position, rotation = 0 }: { position: [number, number, number]; rotation?: number }) {
+  return (
+    <group position={position} rotation={[0, rotation, 0]}>
+      {/* Timber walls with a couple of darker corner posts. */}
+      <mesh position={[0, 0.62, 0]} castShadow receiveShadow>
+        <boxGeometry args={[1.9, 1.24, 1.5]} />
+        <meshStandardMaterial color={HUT_TIMBER} roughness={0.9} />
+      </mesh>
+      <mesh position={[-0.86, 0.62, 0.68]} castShadow={false}>
+        <boxGeometry args={[0.16, 1.24, 0.16]} />
+        <meshStandardMaterial color={HUT_TIMBER_DARK} roughness={0.92} />
+      </mesh>
+      <mesh position={[0.86, 0.62, 0.68]} castShadow={false}>
+        <boxGeometry args={[0.16, 1.24, 0.16]} />
+        <meshStandardMaterial color={HUT_TIMBER_DARK} roughness={0.92} />
+      </mesh>
+      {/* Two steep thatch slabs meeting at a ridge. */}
+      <mesh position={[0, 1.62, 0.5]} rotation={[-HUT_ROOF_ANGLE, 0, 0]} castShadow>
+        <boxGeometry args={[2.24, 0.16, 1.3]} />
+        <meshStandardMaterial color={HUT_THATCH} roughness={1} />
+      </mesh>
+      <mesh position={[0, 1.62, -0.5]} rotation={[HUT_ROOF_ANGLE, 0, 0]} castShadow>
+        <boxGeometry args={[2.24, 0.16, 1.3]} />
+        <meshStandardMaterial color={HUT_THATCH_DARK} roughness={1} />
+      </mesh>
+      <mesh position={[0, 2.02, 0]} castShadow>
+        <boxGeometry args={[2.3, 0.14, 0.18]} />
+        <meshStandardMaterial color={HUT_TIMBER_DARK} roughness={0.9} />
+      </mesh>
+      {/* Door and a warm lit window on the front wall. */}
+      <mesh position={[-0.28, 0.5, 0.76]}>
+        <boxGeometry args={[0.52, 0.92, 0.08]} />
+        <meshStandardMaterial color={HUT_DOOR} roughness={0.95} />
+      </mesh>
+      <mesh position={[0.5, 0.78, 0.76]}>
+        <boxGeometry args={[0.32, 0.32, 0.06]} />
+        <meshStandardMaterial color={HUT_WINDOW} emissive={HUT_WINDOW} emissiveIntensity={0.6} roughness={0.6} />
+      </mesh>
+    </group>
+  )
 }
 
 /** The prop held in the right hand: chore-specific, or a small belt tool otherwise. */
@@ -561,11 +751,12 @@ interface MapLayout {
   districts: Record<DistrictId, THREE.Vector3>
 }
 
-function Worker({ record, district, slot, chore, reducedMotion, selected, onSelect }: {
+function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, selected, onSelect }: {
   record: AgentRecord
   district: DistrictId
   slot: number
   chore?: ChoreKind
+  scenicWalker: boolean
   reducedMotion: boolean
   selected: boolean
   onSelect: (id: string) => void
@@ -586,11 +777,13 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
   const pastRef = useRef(Boolean(record.historical))
   const reducedRef = useRef(reducedMotion)
   const choreRef = useRef<ChoreKind | undefined>(chore)
+  const scenicRef = useRef(scenicWalker)
   statusRef.current = record.status
   staleRef.current = Boolean(record.stale)
   pastRef.current = Boolean(record.historical)
   reducedRef.current = reducedMotion
   choreRef.current = chore
+  scenicRef.current = scenicWalker
   const celebrationStartedAt = useRef<number | null>(null)
   const cursorOwned = useRef(false)
   const [hovered, setHovered] = useState(false)
@@ -661,6 +854,12 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
       return
     }
 
+    // A scenic walker uses the same continuous route as an active worker, even when
+    // its real status is past or unknown, so the village is never fully still. This
+    // is decorative selection only: the record, its label and every count stay
+    // untouched. Chore workers are excluded upstream, so chores never drift.
+    if (scenicRef.current) { applyWalkRoute(walkNode, bodyNode, legs, arms, clock.elapsedTime, cadence); return }
+
     // A non-current runtime status on a past record is demoted so nothing old reads as
     // active. A current unknown stays unknown and rests neutral; a past unknown is a real
     // past session and is allowed to loop ambiently below.
@@ -672,15 +871,7 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
     if (status === 'active') {
       // Walk the closed ellipse continuously. The route passes through an arc and then
       // rests in the same arc; because the loop is closed, no frame ever snaps.
-      const progress = (((t * cadence) / WALK_SECONDS) % 1 + 1) % 1
-      // Ease in from the resting arc and back out so entry and exit to rest glide.
-      const local = progress < ENTER_FRACTION ? progress / ENTER_FRACTION : progress > 1 - ENTER_FRACTION ? (1 - progress) / ENTER_FRACTION : 1
-      const cx = -ROUTE_ENTRY_X * (1 - local)
-      const cz = -ROUTE_ENTRY_Z * (1 - local)
-      applyWalk(walkNode, legs, arms, progress, cx, cz)
-      bodyNode.position.y = Math.abs(Math.sin(progress * Math.PI * 2 * 7)) * 0.04
-      bodyNode.rotation.x = 0
-      bodyNode.rotation.z = Math.sin(progress * Math.PI * 2 * 7) * 0.02
+      applyWalkRoute(walkNode, bodyNode, legs, arms, t, cadence)
       return
     }
 
@@ -740,10 +931,15 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
   })
 
   const orbColor = record.stale ? statusColor.unknown : statusColor[record.status]
+  // Place the Great Hall cook just south of the fixed hearth, facing it. Every
+  // other worker keeps its stable slot, and the record's district is unchanged.
+  const placement: [number, number, number] = chore === 'cooking' && district === 'great-hall'
+    ? COOK_POSITION
+    : [(slot % 3 - 1) * SLOT_SPACING_X, 0, Math.floor(slot / 3) * SLOT_SPACING_Z + SLOT_ORIGIN_Z]
 
   return (
     <group
-      position={[(slot % 3 - 1) * SLOT_SPACING_X, 0, Math.floor(slot / 3) * SLOT_SPACING_Z + SLOT_ORIGIN_Z]}
+      position={placement}
       scale={WORKER_SCALE}
       onClick={(event) => {
         event.stopPropagation()
@@ -847,7 +1043,7 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
 
       {/* The chore station sits on the ground beside the worker, outside the animated
           walk/body groups, so props never sway with the pose. */}
-      <ChoreStation chore={chore} reducedMotion={reducedMotion} />
+      <ChoreStation chore={chore} />
 
       {/* Always mounted and faded in on hover, so moving agents never flicker the marker.
           A tiny translucent rhombus with only the short name and abbreviated task. */}
@@ -866,11 +1062,12 @@ function Worker({ record, district, slot, chore, reducedMotion, selected, onSele
   )
 }
 
-function District({ id, position, records, chores, index, selectedId, reducedMotion, onSelect }: {
+function District({ id, position, records, chores, walkers, index, selectedId, reducedMotion, onSelect }: {
   id: DistrictId
   position: THREE.Vector3
   records: AgentRecord[]
   chores: Map<string, ChoreKind>
+  walkers: ReadonlySet<string>
   index: number
   selectedId?: string
   reducedMotion: boolean
@@ -904,7 +1101,7 @@ function District({ id, position, records, chores, index, selectedId, reducedMot
         <meshBasicMaterial color={districtUniform[id].accent} transparent opacity={0.4} depthWrite={false} />
       </mesh>
       {records.map((record, slotIndex) => (
-        <Worker key={record.id} record={record} district={id} slot={slots[slotIndex]} chore={chores.get(record.id)} reducedMotion={reducedMotion} selected={selectedId === record.id} onSelect={onSelect} />
+        <Worker key={record.id} record={record} district={id} slot={slots[slotIndex]} chore={chores.get(record.id)} scenicWalker={walkers.has(record.id)} reducedMotion={reducedMotion} selected={selectedId === record.id} onSelect={onSelect} />
       ))}
       {/* A bounded vertical stagger by district keeps the central hall labels apart, and
           the label sits below the worker marker in render priority. */}
@@ -989,6 +1186,10 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
   // unknown workers are eligible, so the live roster still visibly does chores.
   const chores = useMemo(() => assignChores(records), [records])
 
+  // A few deterministic scenic walkers, so the village is not motionless when the
+  // live roster reports no active workers. Recomputed per snapshot, never per frame.
+  const walkers = useMemo(() => selectScenicWalkers(records, chores), [records, chores])
+
   const grouped = useMemo(() => (Object.keys(districtMeta) as DistrictId[]).map((id) => ({
     id,
     records: records.filter((record) => record.district === id),
@@ -1023,12 +1224,23 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
           position={layout.districts[group.id] ?? new THREE.Vector3()}
           records={group.records}
           chores={chores}
+          walkers={walkers}
           index={index}
           selectedId={selectedId}
           reducedMotion={reducedMotion}
           onSelect={onSelect}
         />
       ))}
+      {/* Two fixed Viking huts behind the Forge and Dock rows. Static geometry only. */}
+      {HUT_PLACEMENTS.map((hut) => {
+        const anchor = layout.districts[hut.district]
+        return <VikingHut key={hut.district} position={[anchor.x + hut.offset[0], 0, anchor.z + hut.offset[1]]} rotation={hut.rotation} />
+      })}
+      {/* One persistent hearth in the Great Hall, visible with or without a cook. */}
+      <CookingHearth
+        position={[layout.districts[HEARTH_DISTRICT].x + HEARTH_OFFSET[0], 0, layout.districts[HEARTH_DISTRICT].z + HEARTH_OFFSET[1]]}
+        reducedMotion={reducedMotion}
+      />
       <OrbitControls makeDefault enablePan={false} minDistance={9} maxDistance={60} minPolarAngle={0.35} maxPolarAngle={1.32} target={DEFAULT_CAMERA_TARGET} />
     </>
   )
