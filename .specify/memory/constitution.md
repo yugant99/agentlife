@@ -1,50 +1,37 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Mythic Agent Command Center Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Local, Read-Only Telemetry
+The command center is a standalone, local-only, read-only visualization of agent telemetry. Adapters read already-authenticated local CLIs, bind to loopback, and never mutate provider state. Features MUST NOT add write routes, prompt submission, model execution, or any remote asset or network dependency; the app MUST remain fully usable offline once installed. Browser-visible data stays limited to safe metadata (no prompts, message bodies, tool input/output, or credentials).
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Live and Simulation Stay Separate
+Live and simulation are distinct, explicit, and never blended. Simulation is opt-in and visibly watermarked; live reads never synthesize records and never mix demo data in; a failed refresh retains the last snapshot as stale rather than substituting synthetic data. Any feature MUST preserve this boundary and the labels that expose it.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Visuals Are Never Evidence
+Scene motion, chore activity, props, smoke, and hover markers are decorative staging only. They MUST NOT alter, imply, cause, prove, or override any provider-reported fact — status, activity, provider, model, id, timestamps, or history. A worker visibly chopping wood, drawing water, or cooking is NOT a claim that the underlying agent is performing that real task, and no visual may be presented as proof of verified model work. The roster and inspector remain the authoritative, labelled source of operational detail.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Reduced Motion Is Honored
+When the user requests reduced motion, scene animation and CSS loops MUST stop or reduce to a static, fully legible pose. Information MUST remain available without motion; motion is never the only carrier of meaning.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Small Scope, No New Weight
+Prefer the simplest change inside the existing React Three Fiber / Three.js components. Reuse shared geometry and materials, bound the number of visible props, keep per-frame cost sensible for dozens of workers, and avoid a forest of duplicate assets. Do not add remote assets, CDN requests, or heavy animation/character dependencies. Keep the map static and locally bundled.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### VI. Verification Is Explicit (NON-NEGOTIABLE)
+Per the user's AGENTS rule, tests, builds, typechecks, smoke tests, browser QA, and other verification commands MUST NOT be run unless the user explicitly requests them. Planning and implementation may proceed without running them. Do not invent or mandate a test pipeline, and do not treat an unrun command as a passing result. When commands are requested, report exactly what was run and what was observed.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+## Additional Constraints
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+- **Preserved behaviors**: history placement (historical records ambient, stale records neutral), status labels and colours, click-to-select (with orbit-drag not selecting), the live/simulation source control, and the local-only boundary MUST remain accurate for the same inputs.
+- **Accessibility**: the roster and inspector are the accessible source of detail; decorative scene elements stay out of the accessibility tree (`aria-hidden`), and hover markers never block pointer interaction with the scene.
+- **Attribution**: redistributed map assets and fonts keep their AGPL-3.0 license text and local hosting.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Workflow
+
+Changes stay scoped to the smallest set of existing files that satisfies the feature. New modules are added only when they clearly reduce complexity. Visual changes are validated against the preserved-behavior list above, and any claim of success is limited to what was actually observed.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes ad-hoc practice for this project. Amendments require a written change to this file, an updated version number, and a note of what changed. Every plan and implementation review MUST verify compliance with these principles; a feature that cannot comply must be redesigned rather than granted an exception. Complexity beyond the simplest viable change must be justified in the plan's Complexity Tracking.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-09-23 | **Last Amended**: 2026-09-23
