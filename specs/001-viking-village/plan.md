@@ -8,7 +8,9 @@
 
 ## Summary
 
-Make the agent overlay read as a prettier Viking village: a small bounded set of workers visibly perform three believable chores (wood chopping, water filling, cooking with smoke) at shared stations, every other worker stays visibly alive, worker silhouettes gain low-poly Viking details (tunics/cloaks, fur, beards, helms, grounded boots, legible props), and hovering a worker shows a tiny semi-transparent bobbing rhombus carrying only a short name and an abbreviated task. Chore staffing prefers active workers but falls back to any non-stale real record — including the historical (past) and unknown records that dominate the current live page (0 active / 23 past / 4 unknown) — so chores are visible in live mode; only stale failed-refresh snapshots stay neutral, and no worker's status marker, label, roster wording, or count changes. A bounded camera/worker-scale/label legibility pass makes the chores and Viking details readable at a normal (~842px) viewport. The existing read-only adapters, live/simulation distinction, history placement, status labels, click selection, reduced-motion handling, and local-only boundary are preserved. The implementation stays inside the existing React Three Fiber / Three.js components with no new dependency and no remote assets.
+Make the agent overlay read as a prettier Viking village: a small bounded set of workers visibly perform three believable chores (wood chopping, water filling, cooking with smoke) at shared stations, every other worker stays visibly alive, worker silhouettes gain low-poly Viking details (tunics/cloaks, fur, beards, helms, grounded boots, legible props), and hovering a worker shows a tiny semi-transparent bobbing rhombus carrying only a short name and an abbreviated task. Chore staffing works district-first — wood at the Forge, water at the Dock, cooking at the Great Hall — preferring active workers in that district and falling back to any other non-stale real record, including the historical (past) and unknown records that dominate the current live page (0 active / 23 past / 4 unknown), so chores are visible in live mode; only stale failed-refresh snapshots stay neutral, and no worker's status marker, label, roster wording, or count changes. A bounded camera/worker-scale/label legibility pass makes the chores and Viking details readable at a normal (~842px) viewport. The existing read-only adapters, live/simulation distinction, history placement, status labels, click selection, reduced-motion handling, and local-only boundary are preserved. The implementation stays inside the existing React Three Fiber / Three.js components with no new dependency and no remote assets.
+
+Visual direction: take broad inspiration from playful strategy-game villages, with chunky toy-like proportions, warm timber and stone, selective saturated accents, and readable fire/smoke effects. Use original procedural geometry and the existing local map; do not copy another game's assets or character designs.
 
 ## Technical Context
 
@@ -24,9 +26,9 @@ Make the agent overlay read as a prettier Viking village: a small bounded set of
 
 **Project Type**: Single-project web application (Vite + React front end with a loopback-only Node read-only telemetry proxy).
 
-**Performance Goals**: Smooth, interactive scene with dozens of workers. Bounded chore stations and shared prop geometry/materials; no per-frame allocation in the frame loop; hover label mounted only for the hovered/selected worker; existing `dpr={[1, 1.65]}` cap retained.
+**Performance Goals**: Smooth, interactive scene with dozens of workers. Bounded chore stations, no per-frame React state for chore motion, and the existing `dpr={[1, 1.65]}` cap retained. Hover markers stay mounted and fade on hover to avoid flicker.
 
-**Constraints**: Local-only; no remote assets or CDN requests; no heavy animation or character dependency; telemetry stays read-only; live and simulation never blend; historical/unknown records may be staged at chores but never counted active and never relabelled; stale records stay neutral; reduced motion disables scene motion and CSS loops; orbit-drag must not select; no visible motion/evidence disclaimer.
+**Constraints**: Local-only; no remote assets or CDN requests; no heavy animation or character dependency; telemetry stays read-only; live and simulation never blend; each chore is staffed from its intended district first (wood Forge, water Dock, cooking Great Hall) with active workers preferred there, and non-stale historical/unknown records may be staged at chores but are never counted active and never relabelled; stale records stay neutral; reduced motion disables scene motion and CSS loops; orbit-drag must not select; no visible motion/evidence disclaimer.
 
 **Scale/Scope**: Seven districts, dozens of workers across them (current live snapshot: 27 records), a bounded set of chore stations (at most one per chore kind plus at most one repeat — a handful total), one hover marker visible at a time, and a bounded camera/scale/label change.
 
@@ -100,7 +102,7 @@ Source review of the restored page at ~842px wide found that workers render tiny
 | Hall label overlap | all at the same height, default z-index | bounded vertical stagger by district index (`index * ≈0.35` world units) plus hall labels at a lower render priority than worker markers (`zIndexRange` below the marker) | Separates the central halls whose labels currently overlap, and keeps labels from covering workers. |
 | Worker hover marker | `y=2.55`, `distanceFactor=34`, `zIndexRange=[20,0]` | `y≈3.6` (clears the scaled orb), `distanceFactor≈30`, `zIndexRange` above hall labels | Keeps the marker above the worker and above hall labels after scaling. |
 
-**Bounded outcome**: at ~842px wide with the default camera, a worker's silhouette details and chore props are distinguishable, and no two hall-label boxes intersect. Exact values are finalized during implementation with a single visual check; no other camera or scene behavior changes.
+**Bounded outcome**: at ~842px wide with the default camera, a worker's silhouette details and chore props are distinguishable, and no two hall-label boxes intersect. Exact values are settled from the constants above; no other camera or scene behavior changes, and no visual check is run as part of implementation.
 
 ## Complexity Tracking
 

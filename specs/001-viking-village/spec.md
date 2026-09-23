@@ -8,7 +8,7 @@
 
 **Input**: User description: "A prettier Viking village, workers visibly doing chores (wood chopping, filling water, cooking with smoke), and a tiny ghostlike floating rhombus on hover with only a short agent name and abbreviated task. Preserve read-only telemetry, live/simulation distinction, history placement, status labels, click selection, reduced-motion support, and the local-only app. No remote assets or heavy animation dependency."
 
-**Revision (2026-09-23, post source review)**: The live page currently shows 27 records — 0 active, 23 past, 4 unknown. The original rule that excluded historical and unknown records from chore stations would therefore show zero chores in live mode. The user explicitly wants older workers to move and now perform chores. This revision (a) allows non-stale historical and unknown records to be chosen for decorative chore staging while their Past/Unknown markers, roster wording, counts, and telemetry facts stay unchanged; (b) keeps stale failed-refresh snapshots neutral; (c) prefers currently-active workers when present and falls back to other non-stale real records; (d) removes any visible legalistic motion disclaimer; and (e) adds a bounded camera/worker-scale/label legibility requirement because workers render tiny against the whole island and central hall labels overlap at a normal (~842px) viewport.
+**Revision (2026-09-23, post source review)**: The live page currently shows 27 records — 0 active, 23 past, 4 unknown. The original rule that excluded historical and unknown records from chore stations would therefore show zero chores in live mode. The user explicitly wants older workers to move and now perform chores. This revision (a) allows non-stale historical and unknown records to be chosen for decorative chore staging while their Past/Unknown markers, roster wording, counts, and telemetry facts stay unchanged; (b) keeps stale failed-refresh snapshots neutral; (c) staffs each chore from its intended district first (wood at the Forge, water at the Dock, cooking at the Great Hall), preferring active workers there, and falls back to other non-stale real records only when that district has no eligible worker; (d) removes any visible legalistic motion disclaimer; and (e) adds a bounded camera/worker-scale/label legibility requirement because workers render tiny against the whole island and central hall labels overlap at a normal (~842px) viewport.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -105,7 +105,7 @@ An operator opening the app at a normal viewport (about 842px wide) sees workers
 - **FR-004**: Chore props MUST be shared and reused across stations so the scene never accumulates a duplicate prop per worker.
 - **FR-005**: Decorative chore activity MUST NOT alter or override any worker's telemetry status, activity text, provider, model, id, history, status marker, roster wording, or active/past/unknown counts.
 - **FR-006**: The no-claim rule MUST be enforced by not mutating telemetry and not implying a chore is verified work; no visible motion or "not evidence" disclaimer text may be added to the UI.
-- **FR-007**: Chore station selection MUST prefer currently-active workers when any are present, and MUST fall back to other non-stale real records — including historical (past) and unknown workers — so chores remain visible in a live snapshot with no active workers. Only stale (failed-refresh) records MUST be excluded and left neutral.
+- **FR-007**: Chore station selection MUST staff each chore from its intended district first — wood at the Forge, water at the Dock, cooking at the Great Hall — whenever that district has any eligible non-stale worker, preferring active workers within it. It MUST fall back to another district only when the intended district has no eligible non-stale worker, and MUST accept other non-stale real records — including historical (past) and unknown workers — so chores remain visible in a live snapshot with no active workers. Only stale (failed-refresh) records MUST be excluded and left neutral.
 - **FR-008**: A worker shown at a chore station MUST keep its existing Past/Unknown status marker, label, and roster wording unchanged, and MUST NOT be counted as active.
 
 **Hover marker**
@@ -121,7 +121,7 @@ An operator opening the app at a normal viewport (about 842px wide) sees workers
 - **FR-014**: Worker figures MUST use low-poly geometry and read as Vikings through distinctive tunics/cloaks, fur, beards, and helms.
 - **FR-015**: Figures MUST have grounded boots and legible held or adjacent props (axe, bucket, cauldron) appropriate to their chore.
 - **FR-016**: Figures MUST NOT use exaggerated features such as giant horns and MUST NOT use realistic imported human characters.
-- **FR-017**: The village MUST read as a cohesive, prettier Viking settlement without adding remote assets or a heavy animation dependency.
+- **FR-017**: The village MUST read as a cohesive, playful strategy-game Viking settlement through chunky silhouettes, warm timber and stone, clear colour accents, and expressive but restrained fire and smoke, without copying another game's characters or assets or adding a remote asset or heavy animation dependency.
 
 **Viewport legibility**
 
@@ -142,9 +142,9 @@ An operator opening the app at a normal viewport (about 842px wide) sees workers
 
 ### Key Entities *(include if feature involves data)*
 
-- **Worker (agent record)**: A telemetry record placed in the village. Key attributes: id, title (short name), status, activity, provider, model, district, and the historical/stale flags. Read-only; never mutated by the scene.
+- **Worker (agent record)**: A telemetry record placed in the village. Key attributes: id, session title, status, activity, provider, model, district, and the historical/stale flags. Read-only; never mutated by the scene.
 - **Chore station**: A believable location in the village tied to one chore kind (wood chopping, water, cooking). Attributes: kind, world location, the prop set it owns, and a capacity of one worker.
-- **Chore assignment**: The bounded, deterministic mapping of a small number of eligible workers to chore stations, preferring active workers and falling back to any non-stale real record (including past and unknown). Decorative only; it never changes a record.
+- **Chore assignment**: The bounded, deterministic mapping of a small number of eligible workers to chore stations. Each chore is staffed from its intended district first (wood → Forge, water → Dock, cooking → Great Hall), preferring active workers within that district, and falls back elsewhere only when the intended district has no eligible non-stale worker. Decorative only; it never changes a record.
 - **Worker silhouette profile**: The low-poly appearance of a worker — tunic/cloak, fur, beard, helm, grounded boots — plus the chore prop it may hold.
 - **Hover marker**: The transient rhombus shown on hover. Attributes: visibility, short name, abbreviated task, semi-transparency, bob state, and pointer-safe behavior.
 - **View framing**: The bounded default camera pose, zoom limits, worker scale, and label placement that keep the cluster legible at the normal viewport.
@@ -169,7 +169,7 @@ An operator opening the app at a normal viewport (about 842px wide) sees workers
 
 - The existing static Villages map remains the backdrop; only the agent overlay, its dressing, and the default framing change.
 - The telemetry contract (`AgentRecord`, live/simulation, historical/stale) is unchanged and remains the source of truth.
-- Chore stations are a small fixed set (one bounded station per chore kind), assigned deterministically; active workers are preferred, and non-stale past/unknown workers are valid fallbacks so a 0-active snapshot still shows chores.
+- Chore stations are a small fixed set (one bounded station per chore kind). Each is assigned deterministically from its intended district first (wood → Forge, water → Dock, cooking → Great Hall), preferring active workers and accepting non-stale past/unknown workers, so a 0-active snapshot still shows chores; it falls back to another district only when the intended district has no eligible non-stale worker.
 - The hover marker is a scene affordance only; full detail continues to live in the roster and inspector.
 - No new third-party dependency is added; all geometry, materials, and effects are built from what the project already bundles.
 - Reduced motion follows the existing `prefers-reduced-motion` handling.

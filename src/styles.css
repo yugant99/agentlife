@@ -94,18 +94,23 @@ button:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .workspace { height: calc(100dvh - 70px); display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, .65fr); }
 .scene-shell { position: relative; min-width: 0; overflow: hidden; background: #c2ced1; }
 .world-canvas { position: absolute; inset: 0; }
-.worker-tooltip { min-width: 150px; max-width: 230px; padding: 8px 10px; color: var(--ink); background: rgba(248, 243, 232, .96); border: 1px solid var(--line-strong); border-left: 3px solid var(--ochre); border-radius: 3px; box-shadow: 0 10px 26px rgba(30, 40, 38, .22); text-align: left; }
-.worker-tooltip.is-selected { border-left-color: var(--sage-deep); background: #fffaf0; }
-.worker-tooltip.is-stale { opacity: .85; border-left-color: var(--dim); }
-.worker-tooltip-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; font-weight: 600; }
-.worker-tooltip-title em { color: var(--muted); font-family: var(--mono); font-size: 8px; font-style: normal; text-transform: uppercase; letter-spacing: .1em; }
-.worker-tooltip-meta { display: block; margin-top: 3px; color: #8a5a12; font-family: var(--mono); font-size: 9px; line-height: 1.4; text-transform: uppercase; }
-.worker-tooltip-activity { display: block; margin-top: 5px; color: #3a4441; font-size: 11px; line-height: 1.4; }
+/* A tiny ghostlike rhombus: a translucent diamond plate carrying only a short agent
+   name and an abbreviated task. The plate is clipped, so the horizontal text must sit
+   inside the diamond's inscribed rectangle; the copy block is sized to stay there. */
+.worker-marker { pointer-events: none; }
+.worker-marker-bob { position: relative; width: 120px; height: 70px; display: grid; place-items: center; animation: marker-bob 2.8s ease-in-out infinite; }
+.worker-marker-plate { position: absolute; inset: 0; background: rgba(248, 243, 232, .5); border: 1px solid rgba(194, 182, 150, .8); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); backdrop-filter: blur(1.5px); box-shadow: 0 5px 14px rgba(30, 40, 38, .15); }
+.worker-marker-copy { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; width: 60px; text-align: center; }
+.worker-marker-name { max-width: 60px; overflow: hidden; color: var(--ink); font-size: 10px; font-weight: 600; line-height: 1.05; white-space: nowrap; text-overflow: ellipsis; }
+.worker-marker-task { display: -webkit-box; max-width: 60px; overflow: hidden; color: var(--muted); font-size: 8px; line-height: 1.1; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.worker-marker.is-selected .worker-marker-plate { background: rgba(255, 250, 240, .68); border-color: var(--sage-deep); }
+.worker-marker.is-stale .worker-marker-plate, .worker-marker.is-past .worker-marker-plate { border-color: rgba(138, 143, 130, .8); }
+@keyframes marker-bob { 0%, 100% { transform: translateY(-2.5px); } 50% { transform: translateY(2.5px); } }
 .simulation-watermark { position: absolute; z-index: 1; right: 22px; bottom: 20px; color: rgba(90, 58, 12, .7); font-family: var(--mono); font-size: 11px; font-weight: 700; line-height: 1; letter-spacing: .22em; pointer-events: none; }
-.world-label { min-width: 104px; padding: 6px 9px; color: var(--ink); background: rgba(248, 243, 232, .93); border: 1px solid var(--line-strong); border-left: 3px solid var(--sage); border-radius: 3px; box-shadow: 0 8px 20px rgba(30, 40, 38, .18); text-align: left; }
+.world-label { min-width: 86px; padding: 5px 8px; color: var(--ink); background: rgba(248, 243, 232, .9); border: 1px solid var(--line-strong); border-left: 3px solid var(--sage); border-radius: 3px; box-shadow: 0 6px 16px rgba(30, 40, 38, .16); text-align: left; }
 .world-label span, .world-label small { display: block; white-space: nowrap; }
-.world-label span { font-size: 11px; font-weight: 600; }
-.world-label small { margin-top: 2px; color: var(--muted); font-family: var(--mono); font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }
+.world-label span { font-size: 10px; font-weight: 600; }
+.world-label small { margin-top: 1px; color: var(--muted); font-family: var(--mono); font-size: 7px; text-transform: uppercase; letter-spacing: .08em; }
 
 /* The sidebar reads as a printed civic directory, not a stack of web cards. */
 .operations-panel {
