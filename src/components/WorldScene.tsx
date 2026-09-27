@@ -1156,7 +1156,7 @@ function District({ id, position, records, chores, walkers, index, selectedId, r
           the label keeps a stable readable screen size through the orbit range instead
           of ballooning when a district nears the camera. */}
       <Html position={[0, HALL_LABEL_BASE_Y + index * HALL_LABEL_STAGGER, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
-        <div className="world-label"><span>{meta.name}</span><small>{records.length} {records.length === 1 ? 'worker' : 'workers'}</small></div>
+        <div className={`world-label${id === 'scribe-hall' ? ' world-label--scribe' : ''}`}><span>{meta.name}</span><small>{records.length} {records.length === 1 ? 'worker' : 'workers'}</small></div>
       </Html>
     </group>
   )
