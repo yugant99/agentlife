@@ -4,6 +4,8 @@
 
 **Input**: Feature specification from `specs/002-agent-world-blackhole/spec.md`. Planning artifacts only — no implementation authorized.
 
+**Implementation update (2026-09-27):** The user subsequently authorized both slices and end-to-end checks. The scene changes are integrated in the standalone command center through commit `82a128c`. `npm run build` and `npm run test:telemetry` passed. Browser review covered default and 842px layouts, live and simulation views, worker selection, orbit drag, reduced-motion CSS, and `?sky=off`; the final visible live view paced at a 16.7ms median and 17.4ms p95 over 120 animation frames on this machine. The no-WebGL context-creation fallback and forced stale-snapshot branch were not exercised. Planning-only language below records the original plan and is superseded by this update.
+
 ## Summary
 
 Keep the existing Viking village read-only command center and add a subordinate, decorative Interstellar-inspired black hole (dark center, luminous tilted disk, bent-light look) in its sky. Reuse the current React Three Fiber / Three.js canvas and telemetry wiring. Render the visual illusion on one shader surface behind the village, freeze it for reduced motion, and provide static fallbacks. The first slice also grades fog and lighting enough to keep workers readable. The GPU cost is a design risk to measure later, not a performance claim.

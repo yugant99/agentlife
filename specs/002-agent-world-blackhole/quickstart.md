@@ -1,6 +1,6 @@
 # Quickstart: Agent Village and Black Hole Backdrop (future manual scenarios)
 
-**Status: UNRUN — planning only.** No tests, builds, smoke checks, browser QA, service startups, or installs were run or authorized for this planning pass (constitution VI). The scenarios below are for a later authorized implementation check. Do not treat them as passing.
+**Status (2026-09-27): PARTIALLY RUN.** After the planning pass, the user authorized implementation and checks. Scenarios 1–3 and the `?sky=off` branch of Scenario 4 were checked locally; the no-WebGL context-creation branch and forced stale refresh in Scenario 5 remain UNRUN. `npm run build` and `npm run test:telemetry` passed. The original scenario instructions below remain a repeatable guide; see `plan.md` for the observed results and limits.
 
 ## Prerequisites (later)
 

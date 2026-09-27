@@ -4,6 +4,8 @@ A standalone, read-only visualization of local agent telemetry placed as agent m
 
 The project is independent. It does not read, write, import, or depend on the IPAM repository.
 
+The village now has an original, decorative black-hole sky and small district pennants. The sky is a browser shader approximation, not a physics ray tracer or a signal of agent activity. Add `?sky=off` to the local URL for a static dark sky; reduced-motion preferences freeze its animation. If WebGL cannot start, the roster remains available beside the static fallback sky.
+
 ## Run
 
 Requirements: Node.js 20+ and npm.

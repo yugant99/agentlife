@@ -1,7 +1,7 @@
 # Feature Specification: Agent Village and Black Hole Backdrop
 
 **Feature branch**: `codex/agent-world-blackhole-plan`  
-**Status**: Planning draft, 2026-09-27  
+**Status**: Implemented locally, 2026-09-27 (visual feature; see verification record in `plan.md`)  
 **Input**: Make the standalone agent command center feel like a lively strategy-game village, taking inspiration from Agent Office's visible workers. Add an Interstellar-inspired black hole in the background. Plan before implementing.
 
 ## Scope and assumptions
@@ -41,7 +41,7 @@
 - Preserve the existing local map's attribution and license. Do not copy the article's image or Agent Office source without a separate asset/license decision.
 - Use the current React Three Fiber, Three.js and Vite stack. A new dependency requires a demonstrated need in the plan.
 - Bound GPU work and include an effect-off/static path. Exact frame time or device support claims require later measurement.
-- This specification authorizes planning only. No implementation, tests, builds, browser checks or service startup are part of this planning pass.
+- This specification originally authorized planning only. The user subsequently authorized implementation and end-to-end checks on 2026-09-27.
 
 ## Success criteria for a later authorized implementation
 
