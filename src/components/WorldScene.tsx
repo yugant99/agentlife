@@ -50,10 +50,13 @@ const SLOT_SPACING_X = 1.5
 const SLOT_SPACING_Z = 1.5
 const SLOT_ORIGIN_Z = -0.5
 const MARKER_DISTANCE_FACTOR = 28
-const HALL_LABEL_DISTANCE_FACTOR = 20
 const HALL_LABEL_BASE_Y = 3.2
 const HALL_LABEL_STAGGER = 0.3
-const DEFAULT_CAMERA_POSITION: [number, number, number] = [10, 12.5, 21]
+// Pulled back from [10,12.5,21] so the full seven-district cluster plus hall
+// labels fit the normal viewport (the scene pane is narrower than the window
+// once the roster sidebar takes its share). Worker scale is untouched, so
+// workers stay legible; orbit/selection and the capped DPR are unchanged.
+const DEFAULT_CAMERA_POSITION: [number, number, number] = [12, 14.5, 26]
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 1.6, 0]
 
 const statusColor: Record<WorkerStatus, string> = {
@@ -700,6 +703,50 @@ function VikingHut({ position, rotation = 0 }: { position: [number, number, numb
   )
 }
 
+// --- District pennants ---------------------------------------------------------
+// One small reusable marker per district: a low-poly pole with a district-colored
+// flag and an unlit accent bead, plus a taller hanging banner for the Great Hall
+// as the village center. Static geometry only (no per-frame work, no lights, no
+// shadows, no pointer handlers, no telemetry input): colors come from the static
+// uniform map and positions from the static layout, so empty districts still read.
+// All seven share one behind-row offset clear of worker slots, huts and hearth.
+const PENNANT_OFFSET: [number, number] = [-2.7, -1.9]
+
+function DistrictPennant({ position, district, grand = false }: { position: [number, number, number]; district: DistrictId; grand?: boolean }) {
+  const uniform = districtUniform[district]
+  const poleHeight = grand ? 3.1 : 2.3
+  return (
+    <group position={position}>
+      <mesh position={[0, poleHeight / 2, 0]} castShadow={false} receiveShadow={false}>
+        <cylinderGeometry args={[0.045, 0.06, poleHeight, 6]} />
+        <meshStandardMaterial color={WOOD} roughness={0.9} />
+      </mesh>
+      {/* Unlit bead so the district accent reads even under the twilight grade. */}
+      <mesh position={[0, poleHeight + 0.07, 0]} castShadow={false} receiveShadow={false}>
+        <sphereGeometry args={[0.07, 8, 6]} />
+        <meshBasicMaterial color={uniform.accent} />
+      </mesh>
+      {grand && (
+        <mesh position={[0, poleHeight - 0.08, 0]} castShadow={false} receiveShadow={false}>
+          <boxGeometry args={[1.0, 0.06, 0.06]} />
+          <meshStandardMaterial color={WOOD} roughness={0.9} />
+        </mesh>
+      )}
+      {grand ? (
+        <mesh position={[0, poleHeight - 0.68, 0]} castShadow={false} receiveShadow={false}>
+          <boxGeometry args={[0.85, 1.1, 0.04]} />
+          <meshStandardMaterial color={uniform.coat} roughness={0.85} />
+        </mesh>
+      ) : (
+        <mesh position={[0.34, poleHeight - 0.25, 0]} castShadow={false} receiveShadow={false}>
+          <boxGeometry args={[0.62, 0.34, 0.03]} />
+          <meshStandardMaterial color={uniform.coat} roughness={0.85} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
 /** The prop held in the right hand: chore-specific, or a small belt tool otherwise. */
 function HeldProp({ chore, accent }: { chore?: ChoreKind; accent: string }) {
   if (chore === 'woodcutting') {
@@ -1105,8 +1152,10 @@ function District({ id, position, records, chores, walkers, index, selectedId, r
         <Worker key={record.id} record={record} district={id} slot={slots[slotIndex]} chore={chores.get(record.id)} scenicWalker={walkers.has(record.id)} reducedMotion={reducedMotion} selected={selectedId === record.id} onSelect={onSelect} />
       ))}
       {/* A bounded vertical stagger by district keeps the central hall labels apart, and
-          the label sits below the worker marker in render priority. */}
-      <Html position={[0, HALL_LABEL_BASE_Y + index * HALL_LABEL_STAGGER, 0]} center distanceFactor={HALL_LABEL_DISTANCE_FACTOR} zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+          the label sits below the worker marker in render priority. No distanceFactor:
+          the label keeps a stable readable screen size through the orbit range instead
+          of ballooning when a district nears the camera. */}
+      <Html position={[0, HALL_LABEL_BASE_Y + index * HALL_LABEL_STAGGER, 0]} center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
         <div className="world-label"><span>{meta.name}</span><small>{records.length} {records.length === 1 ? 'worker' : 'workers'}</small></div>
       </Html>
     </group>
@@ -1209,14 +1258,17 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
   return (
     <>
       <color attach="background" args={[skyOff ? '#0d1526' : '#05070f']} />
-      <fog attach="fog" args={[skyOff ? '#0d1526' : '#0b1226', 55, 130]} />
-      <ambientLight intensity={0.6} color="#dfe7ea" />
-      <hemisphereLight args={['#e8f1f4', '#8a8570', 0.55]} />
+      <fog attach="fog" args={['#0d1526', 48, 120]} />
+      {/* Twilight grade for the dark-cosmic sky: cool fill, dimmer sky bounce, and a
+          warm low-sun key. Intensities stay high enough to keep worker silhouettes
+          and district colors legible; status orbs are unlit and unaffected. */}
+      <ambientLight intensity={0.5} color="#c3cfe8" />
+      <hemisphereLight args={['#a8bedd', '#54503f', 0.5]} />
       <directionalLight
         castShadow
         position={[-20, 34, 24]}
-        intensity={1.8}
-        color="#fff2dd"
+        intensity={1.6}
+        color="#ffdfae"
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-26}
         shadow-camera-right={26}
@@ -1254,6 +1306,19 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
         position={[layout.districts[HEARTH_DISTRICT].x + HEARTH_OFFSET[0], 0, layout.districts[HEARTH_DISTRICT].z + HEARTH_OFFSET[1]]}
         reducedMotion={reducedMotion}
       />
+      {/* One static pennant per district (grand banner at the Great Hall). All seven
+          render regardless of record counts; colors/positions are static only. */}
+      {grouped.map((group) => {
+        const anchor = layout.districts[group.id] ?? new THREE.Vector3()
+        return (
+          <DistrictPennant
+            key={`pennant-${group.id}`}
+            district={group.id}
+            grand={group.id === 'great-hall'}
+            position={[anchor.x + PENNANT_OFFSET[0], 0, anchor.z + PENNANT_OFFSET[1]]}
+          />
+        )
+      })}
       <OrbitControls makeDefault enablePan={false} minDistance={9} maxDistance={60} minPolarAngle={0.35} maxPolarAngle={1.32} target={DEFAULT_CAMERA_TARGET} />
     </>
   )

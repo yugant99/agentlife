@@ -94,10 +94,11 @@ button:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .workspace { height: calc(100dvh - 70px); display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, .65fr); }
 /* Static dark-cosmic sky: shows behind the Canvas on load and stands in when WebGL
    is unavailable. Purely decorative and motion-free; the WebGL backdrop (or the
-   `?sky=off` static sky) covers it whenever the Canvas runs. */
+   `?sky=off` static sky) covers it whenever the Canvas runs. Gradient center
+   matches the shader hole placement (upper-center, fully inside the viewport). */
 .scene-shell { position: relative; min-width: 0; overflow: hidden; background:
-  radial-gradient(90% 55% at 66% 16%, rgba(88, 120, 220, .28) 0%, rgba(88, 120, 220, 0) 60%),
-  radial-gradient(120% 90% at 66% 14%, #18264d 0%, #0c142c 38%, #05070f 72%, #03040a 100%); }
+  radial-gradient(90% 55% at 60% 20%, rgba(88, 120, 220, .28) 0%, rgba(88, 120, 220, 0) 60%),
+  radial-gradient(120% 90% at 60% 18%, #18264d 0%, #0c142c 38%, #05070f 72%, #03040a 100%); }
 .world-canvas { position: absolute; inset: 0; }
 /* Shown only when the Canvas cannot create a WebGL context. Names the graphics
    failure plainly; the roster beside it stays the source of agent truth. */

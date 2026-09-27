@@ -40,13 +40,15 @@ const fragmentShader = /* glsl */ `
     col += vec3(0.018, 0.010, 0.042) * smoothstep(0.55, 1.0, d.y);
     col = mix(vec3(0.010, 0.013, 0.030), col, smoothstep(-0.35, 0.03, d.y));
 
-    // Quiet upper-screen placement for the hole, off the village center. The mesh
-    // copies the camera orientation each frame, so this direction is screen-fixed
-    // and orbit cannot move the hole out of frame.
-    vec3 C = normalize(vec3(0.28, 0.34, -1.0));
+    // Quiet upper-screen placement for the hole. Lowered and eased toward center
+    // from (0.28, 0.34) so the dark center and ring sit fully inside the normal
+    // viewport, subordinate above the village, with margin to the top edge. The
+    // mesh copies the camera orientation each frame, so this direction is
+    // screen-fixed and orbit cannot move the hole out of frame.
+    vec3 C = normalize(vec3(0.18, 0.24, -1.0));
     float cosA = clamp(dot(d, C), -1.0, 1.0);
 
-    float rs = 0.062;
+    float rs = 0.055;
 
     // Sparse dim stars, kept out of the hole's immediate glare. The mask uses cosA
     // directly (cos 0.1984 ≈ 0.9804, cos 0.0744 ≈ 0.9972) so no acos is needed here.
