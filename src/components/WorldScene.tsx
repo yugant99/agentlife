@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { districtMeta } from '../data/demo'
+import { BlackHoleBackdrop } from './BlackHoleBackdrop'
 import type { AgentRecord, DistrictId, WorkerStatus } from '../types'
 
 // The Villages reference map (andrinr/villages, AGPL-3.0). Assets and the AGPL
@@ -1195,10 +1196,20 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
     records: records.filter((record) => record.district === id),
   })), [records])
 
+  // Manual recovery switch: `?sky=off` keeps a working Canvas on a static sky and
+  // skips the shader backdrop. It never implies automatic failure detection.
+  const skyOff = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('sky') === 'off'
+    } catch {
+      return false
+    }
+  }, [])
+
   return (
     <>
-      <color attach="background" args={['#c2ced1']} />
-      <fog attach="fog" args={['#c2ced1', 55, 130]} />
+      <color attach="background" args={[skyOff ? '#0d1526' : '#05070f']} />
+      <fog attach="fog" args={[skyOff ? '#0d1526' : '#0b1226', 55, 130]} />
       <ambientLight intensity={0.6} color="#dfe7ea" />
       <hemisphereLight args={['#e8f1f4', '#8a8570', 0.55]} />
       <directionalLight
@@ -1214,6 +1225,8 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
         shadow-camera-near={1}
         shadow-camera-far={120}
       />
+      {/* Decorative sky only: reads no telemetry and takes no pointer input. */}
+      {!skyOff && <BlackHoleBackdrop reducedMotion={reducedMotion} />}
       <group scale={layout.scale} position={layout.position}>
         <primitive object={scene} />
       </group>
@@ -1249,7 +1262,7 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
 export function WorldScene(props: { records: AgentRecord[]; selectedId?: string; reducedMotion: boolean; onSelect: (id: string) => void }) {
   return (
     <div className="world-canvas" aria-hidden="true">
-      <Canvas shadows dpr={[1, 1.65]} camera={{ position: DEFAULT_CAMERA_POSITION, fov: 42 }} gl={{ antialias: true, powerPreference: 'high-performance' }}>
+      <Canvas shadows dpr={[1, 1.65]} camera={{ position: DEFAULT_CAMERA_POSITION, fov: 42 }} gl={{ antialias: true, powerPreference: 'high-performance' }} fallback={<div className="world-fallback"><p>3D village unavailable.</p><p>WebGL could not start here; every agent remains listed in the roster.</p></div>}>
         <Suspense fallback={null}><VillageWorld {...props} /></Suspense>
       </Canvas>
     </div>

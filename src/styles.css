@@ -92,8 +92,18 @@ button:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
 .connection-pill.loading .connection-dot { animation: breathe 1.3s ease-in-out infinite; }
 
 .workspace { height: calc(100dvh - 70px); display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, .65fr); }
-.scene-shell { position: relative; min-width: 0; overflow: hidden; background: #c2ced1; }
+/* Static dark-cosmic sky: shows behind the Canvas on load and stands in when WebGL
+   is unavailable. Purely decorative and motion-free; the WebGL backdrop (or the
+   `?sky=off` static sky) covers it whenever the Canvas runs. */
+.scene-shell { position: relative; min-width: 0; overflow: hidden; background:
+  radial-gradient(90% 55% at 66% 16%, rgba(88, 120, 220, .28) 0%, rgba(88, 120, 220, 0) 60%),
+  radial-gradient(120% 90% at 66% 14%, #18264d 0%, #0c142c 38%, #05070f 72%, #03040a 100%); }
 .world-canvas { position: absolute; inset: 0; }
+/* Shown only when the Canvas cannot create a WebGL context. Names the graphics
+   failure plainly; the roster beside it stays the source of agent truth. */
+.world-fallback { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: #cdd8ee; }
+.world-fallback p { margin: 0; font-size: 12px; line-height: 1.5; }
+.world-fallback p:first-child { font-size: 13px; font-weight: 600; letter-spacing: .04em; }
 /* A tiny ghostlike rhombus: a translucent diamond plate carrying only a short agent
    name and an abbreviated task. The plate is clipped, so the horizontal text must sit
    inside the diamond's inscribed rectangle; the copy block is sized to stay there. */
