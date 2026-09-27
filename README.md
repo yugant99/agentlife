@@ -37,7 +37,7 @@ The preview command serves the UI only. Run `npm run telemetry` separately if a 
 - **Oracle shrine:** Fable reviews milestones as an adviser only.
 - **Portability dock:** Spencer is a portability lane owner, shown as an ordinary worker in the roster.
 
-The hierarchy never nests more than two levels below the main lead. Each district wears a distinct uniform, and agents animate as village characters: active agents walk a closed route with swinging arms and legs, review agents bend and inspect, needs-input and failed agents raise a signalling arm, completed agents mark it with a one-shot ground-returning hop before settling, and waiting agents idle with a slow turn. Historical sessions (real, but outside the freshness window) loop a calm ambient gesture without reading as working; stale and unknown records rest in a neutral pose. This scene motion is illustrative and is not evidence of verified model activity. `prefers-reduced-motion` disables scene motion and CSS loops.
+The hierarchy never nests more than two levels below the main lead. Each district wears a distinct uniform, and agents animate as village characters: active agents make a grounded work gesture at their posts, review agents bend and inspect, needs-input and failed agents raise a signalling arm, completed agents mark it with a one-shot ground-returning hop before settling, and waiting agents idle with a slow turn. Historical sessions (real, but outside the freshness window) hold a calm grounded sway in place without reading as working; stale and unknown records rest in a neutral pose. No agent circles or patrols. This scene motion is illustrative and is not evidence of verified model activity. `prefers-reduced-motion` disables scene motion and CSS loops.
 
 ### Hall staging
 

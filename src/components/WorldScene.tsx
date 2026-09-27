@@ -43,9 +43,13 @@ const DISTRICT_ANCHORS: Record<DistrictId, string> = {
   dock: 'ANCHOR_10_Mobility',
 }
 
-// Bounded framing so workers and props read at the normal viewport (~842px wide)
-// without giving up orbit/zoom. The map scale itself is untouched.
-const WORKER_SCALE = 1.4
+// Workers are scaled to sit below the hut ridge (~2.1 units: 1.24 walls plus
+// thatch) and the 2.3 pennant poles. An unscaled worker is ~1.86 to the
+// headwear (~2.14 with the status orb), so 0.8 gives ~1.5 body / ~1.7 with orb:
+// clearly smaller than the huts, pot rim (1.08) near chest height, block (0.44)
+// near hip height, while staying legible at the normal viewport (~842px wide).
+// The map scale itself is untouched.
+const WORKER_SCALE = 0.8
 const SLOT_SPACING_X = 1.5
 const SLOT_SPACING_Z = 1.5
 const SLOT_ORIGIN_Z = -0.5
@@ -54,8 +58,8 @@ const HALL_LABEL_BASE_Y = 3.2
 const HALL_LABEL_STAGGER = 0.3
 // Pulled back from [10,12.5,21] so the full seven-district cluster plus hall
 // labels fit the normal viewport (the scene pane is narrower than the window
-// once the roster sidebar takes its share). Worker scale is untouched, so
-// workers stay legible; orbit/selection and the capped DPR are unchanged.
+// once the roster sidebar takes its share). Orbit/selection and the capped DPR
+// are unchanged.
 const DEFAULT_CAMERA_POSITION: [number, number, number] = [12, 14.5, 26]
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 1.6, 0]
 
@@ -123,41 +127,6 @@ function assignChores(records: AgentRecord[]): Map<string, ChoreKind> {
     used.add(pick.id)
   }
   return assigned
-}
-
-// --- Scenic walkers ----------------------------------------------------------
-// A live roster often reports zero active workers, which would leave the whole
-// village standing still. A small, deterministic set of non-stale, non-chore
-// workers is chosen to walk the existing continuous route as scenery, so the scene
-// stays alive even when nothing is active. This is decorative selection only: it
-// never changes a record, a status, or any active/attention count, and it is
-// bounded to a few workers in different districts so the village never looks like
-// a marching crowd. Past and unknown real records are eligible when needed.
-const SCENIC_WALKER_LIMIT = 3
-const WALKER_STATUS_RANK: Record<WorkerStatus, number> = {
-  active: 0, waiting: 1, review: 1, 'needs-input': 1, failed: 1, complete: 2, unknown: 3,
-}
-
-function selectScenicWalkers(records: AgentRecord[], chores: Map<string, ChoreKind>): Set<string> {
-  const walkers = new Set<string>()
-  const byDistrict = new Map<DistrictId, AgentRecord[]>()
-  for (const record of records) {
-    // Stale snapshots stay neutral, and a worker already posed at a chore must not
-    // drift off to walk.
-    if (record.stale || chores.has(record.id)) continue
-    const pool = byDistrict.get(record.district)
-    if (pool) pool.push(record)
-    else byDistrict.set(record.district, [record])
-  }
-  const byId = (a: AgentRecord, b: AgentRecord) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
-  for (const id of Object.keys(districtMeta) as DistrictId[]) {
-    if (walkers.size >= SCENIC_WALKER_LIMIT) break
-    const pool = byDistrict.get(id)
-    if (!pool || pool.length === 0) continue
-    pool.sort((a, b) => WALKER_STATUS_RANK[a.status] - WALKER_STATUS_RANK[b.status] || byId(a, b))
-    walkers.add(pool[0].id)
-  }
-  return walkers
 }
 
 // --- Hover marker text -------------------------------------------------------
@@ -327,59 +296,23 @@ function Headwear({ kind, color }: { kind: HatKind; color: string }) {
 const CELEBRATION_SECONDS = 2.4
 const CLICK_DRAG_TOLERANCE_PX = 6
 
-// Bounded, decorative motion routines. Walking, inspecting, signalling, the celebration
-// hop and the chore poses are illustrative village staging only; they are never evidence
-// of verified model work. Movement is past-facing for historical records and neutral for
-// stale ones.
-const WALK_SECONDS = 4.2
-const WALK_STRIDE = 0.95
-// A smooth closed ellipse. It is genuinely continuous: position and heading both wrap
-// to the same value at progress 0 and 1, so the loop never snaps.
-const ROUTE_RX = 0.6
-const ROUTE_RZ = 0.42
-// Active and moving-historical workers lean into and out of the route from the resting
-// arc, so entering and leaving rest glides instead of jumping to the origin.
-const ENTER_FRACTION = 0.14
-const ROUTE_ENTRY_X = ROUTE_RX * 0.55
-const ROUTE_ENTRY_Z = ROUTE_RZ * 0.55
+// Bounded, decorative poses never imply verified model work. Workers stay at their
+// posts; only the one-shot completion celebration leaves the ground briefly.
+const WORK_CYCLE_SECONDS = 3.2
 
 function resetLegs(legs: THREE.Group[]) {
   for (const leg of legs) leg.rotation.x = 0
 }
 
 /**
- * Walks the closed route around the agent's post for `progress` in 0..1. The centre of
- * the loop is `(cx, cz)`, which lets departure and return to rest glide.
+ * Active workers move their arms at their posts while their legs remain grounded.
+ * `phase` desynchronizes nearby workers without inventing a travel route.
  */
-function applyWalk(node: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], progress: number, cx = 0, cz = 0) {
-  const angle = progress * Math.PI * 2
-  const x = cx + Math.cos(angle) * ROUTE_RX
-  const z = cz + Math.sin(angle) * ROUTE_RZ
-  node.position.set(x, 0, z)
-  // Heading is perpendicular to the radius, so it advances in step with the position.
-  node.rotation.y = Math.atan2(Math.cos(angle) * ROUTE_RX, -Math.sin(angle) * ROUTE_RZ)
-  const stride = Math.sin(progress * Math.PI * 2 * 7) * WALK_STRIDE
-  legs[0].rotation.x = stride
-  legs[1].rotation.x = -stride
-  arms[0].rotation.x = -stride * 0.65
-  arms[1].rotation.x = stride * 0.65
-}
-
-/**
- * The shared continuous walk used by both an active worker and a scenic walker. The
- * route is a closed ellipse whose entry and exit ease from the resting arc, so a
- * walker glides in and out of motion instead of snapping.
- */
-function applyWalkRoute(walkNode: THREE.Group, bodyNode: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], t: number, cadence: number) {
-  const progress = (((t * cadence) / WALK_SECONDS) % 1 + 1) % 1
-  // Ease in from the resting arc and back out so entry and exit to rest glide.
-  const local = progress < ENTER_FRACTION ? progress / ENTER_FRACTION : progress > 1 - ENTER_FRACTION ? (1 - progress) / ENTER_FRACTION : 1
-  const cx = -ROUTE_ENTRY_X * (1 - local)
-  const cz = -ROUTE_ENTRY_Z * (1 - local)
-  applyWalk(walkNode, legs, arms, progress, cx, cz)
-  bodyNode.position.y = Math.abs(Math.sin(progress * Math.PI * 2 * 7)) * 0.04
-  bodyNode.rotation.x = 0
-  bodyNode.rotation.z = Math.sin(progress * Math.PI * 2 * 7) * 0.02
+function applyWork(legs: THREE.Group[], arms: THREE.Group[], t: number, cadence: number, phase: number) {
+  const reach = Math.sin((t * Math.PI * 2 * cadence) / WORK_CYCLE_SECONDS + phase)
+  resetLegs(legs)
+  arms[0].rotation.x = -0.48 - reach * 0.25
+  arms[1].rotation.x = -0.48 + reach * 0.25
 }
 
 /** A slow bend-and-rise inspect gesture with both arms raised forward. */
@@ -399,18 +332,14 @@ function applySignal(arms: THREE.Group[], t: number, phase: number) {
 }
 
 /**
- * An ambient, ground-returning loop for records that are real but not current. The rise
- * is always multiplied by a window that opens and closes at zero, so the figure lands
- * exactly on the ground and there is never a jump into the idle pose.
+ * A grounded ambient loop for records that are real but not current.
  */
 function applyAmbient(node: THREE.Group, body: THREE.Group, legs: THREE.Group[], arms: THREE.Group[], t: number, phase: number) {
-  const cycle = (Math.sin(t * 0.35 + phase) + 1) / 2
-  const lift = Math.max(0, Math.sin(t * 0.7 + phase))
-  body.position.y = lift * 0.14
+  node.position.set(0, 0, 0)
+  node.rotation.y = Math.sin(t * 0.25 + phase) * 0.3
+  body.position.y = 0
   body.rotation.x = 0
   body.rotation.z = 0
-  node.position.set(Math.sin(t * 0.4 + phase) * 0.12, 0, Math.cos(t * 0.33 + phase) * 0.1)
-  node.rotation.y = cycle * Math.PI * 0.7
   resetLegs(legs)
   arms[0].rotation.x = Math.sin(t * 0.6 + phase) * 0.3
   arms[1].rotation.x = Math.sin(t * 0.6 + phase + 0.6) * 0.3
@@ -652,14 +581,12 @@ const HUT_PLACEMENTS: { district: DistrictId; offset: [number, number]; rotation
   { district: 'forge', offset: [3.1, -2.4], rotation: 0.25 },
   { district: 'dock', offset: [-3.1, -2.4], rotation: -0.35 },
 ]
-// The single hearth lives in the Great Hall, offset clear of the worker columns
-// and the walk route that extends beyond them.
+// The single hearth lives in the Great Hall, offset clear of the worker columns.
 const HEARTH_DISTRICT: DistrictId = 'great-hall'
 const HEARTH_OFFSET: [number, number] = [3.3, 0.6]
-// A cook assigned at the Great Hall stands beside the hearth, aligned in x and
-// facing +z toward it, outside the normal three-column slot grid. A cooking chore
-// that falls back to another district keeps its ordinary slot instead.
-const COOK_POSITION: [number, number, number] = [HEARTH_OFFSET[0], 0, HEARTH_OFFSET[1] - 1.3]
+// The smaller cook stands outside the 0.56-unit stone ring and can reach the
+// cauldron rim. A cooking chore in another district keeps its ordinary slot.
+const COOK_POSITION: [number, number, number] = [HEARTH_OFFSET[0], 0, HEARTH_OFFSET[1] - 0.85]
 
 function VikingHut({ position, rotation = 0 }: { position: [number, number, number]; rotation?: number }) {
   return (
@@ -799,19 +726,17 @@ interface MapLayout {
   districts: Record<DistrictId, THREE.Vector3>
 }
 
-function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, selected, onSelect }: {
+function Worker({ record, district, slot, chore, reducedMotion, selected, onSelect }: {
   record: AgentRecord
   district: DistrictId
   slot: number
   chore?: ChoreKind
-  scenicWalker: boolean
   reducedMotion: boolean
   selected: boolean
   onSelect: (id: string) => void
 }) {
-  // The outer group is the stable, grounded placement and the click target. The walk
-  // group carries the bounded route and the body group carries the pose, so neither can
-  // overwrite the placement.
+  // The outer group is the stable, grounded placement and click target. The walk
+  // group carries heading and the body group carries the pose.
   const walk = useRef<THREE.Group>(null)
   const body = useRef<THREE.Group>(null)
   const leftLeg = useRef<THREE.Group>(null)
@@ -825,21 +750,16 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
   const pastRef = useRef(Boolean(record.historical))
   const reducedRef = useRef(reducedMotion)
   const choreRef = useRef<ChoreKind | undefined>(chore)
-  const scenicRef = useRef(scenicWalker)
   statusRef.current = record.status
   staleRef.current = Boolean(record.stale)
   pastRef.current = Boolean(record.historical)
   reducedRef.current = reducedMotion
   choreRef.current = chore
-  scenicRef.current = scenicWalker
   const celebrationStartedAt = useRef<number | null>(null)
   const cursorOwned = useRef(false)
   const [hovered, setHovered] = useState(false)
   const phase = slot * 1.7
   const uniform = districtUniform[district]
-  // A reviewing agent rests ready to inspect, with one foot slightly forward.
-  const legRest = record.status === 'review' && !record.stale && !reducedMotion ? 0.2 : 0
-
   // Status-and-slot derived timing so agents do not move in lockstep. Deriving these
   // from refs and the clock avoids any per-frame React state.
   const cadence = 1 + (slot % 4) * 0.09
@@ -873,7 +793,7 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
       walkNode.position.set(0, 0, 0)
       walkNode.rotation.y = 0
       bodyNode.position.y = 0
-      // A full turn over ~25s, a slow weight shift, and an occasional small shrug.
+      // A slow oscillating turn over ~25s, a slight weight shift, and an occasional small shrug.
       const shrug = Math.max(0, Math.sin(t * 0.6 + phase)) ** 6
       bodyNode.rotation.set(0, Math.sin(t * 0.25 + phase) * 0.6, Math.sin(t * 0.7 + phase) * 0.02)
       resetLegs(legs)
@@ -888,8 +808,10 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
     // A celebration is bounded to one short window after completion is first seen.
     if (statusRef.current !== 'complete') celebrationStartedAt.current = null
 
-    // Reduced motion and stale snapshots always rest in a neutral pose.
-    if (stillMotion || stale) { settle(); return }
+    // Reset all transforms before posing. A status or chore transition must not
+    // inherit a turn, lean, raised limb, or lift from the previous frame.
+    settle()
+    if (stillMotion || stale) return
 
     // A worker staged at a chore performs it regardless of its reported status, so
     // past and unknown workers visibly work too. Decorative only; the record is untouched.
@@ -902,24 +824,16 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
       return
     }
 
-    // A scenic walker uses the same continuous route as an active worker, even when
-    // its real status is past or unknown, so the village is never fully still. This
-    // is decorative selection only: the record, its label and every count stay
-    // untouched. Chore workers are excluded upstream, so chores never drift.
-    if (scenicRef.current) { applyWalkRoute(walkNode, bodyNode, legs, arms, clock.elapsedTime, cadence); return }
-
     // A non-current runtime status on a past record is demoted so nothing old reads as
     // active. A current unknown stays unknown and rests neutral; a past unknown is a real
-    // past session and is allowed to loop ambiently below.
+    // past session and is allowed to sway ambiently below.
     const status: WorkerStatus = past && statusRef.current === 'active' ? 'waiting' : statusRef.current
     if (status === 'unknown' && !past) { settle(); return }
 
     const t = clock.elapsedTime
 
     if (status === 'active') {
-      // Walk the closed ellipse continuously. The route passes through an arc and then
-      // rests in the same arc; because the loop is closed, no frame ever snaps.
-      applyWalkRoute(walkNode, bodyNode, legs, arms, t, cadence)
+      applyWork(legs, arms, t, cadence, phase)
       return
     }
 
@@ -948,8 +862,8 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
       return
     }
 
-    // Any other non-current record (historical sessions, demoted past activity) loops
-    // ambiently rather than standing perfectly still.
+    // Any other non-current record (historical sessions, demoted past activity) sways
+    // ambiently in place rather than standing perfectly still.
     if (past) { applyAmbient(walkNode, bodyNode, legs, arms, t, phase); return }
 
     if (status === 'review') {
@@ -1001,9 +915,8 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
     >
       <group ref={walk}>
         <group ref={body}>
-          {/* Legs pivot at the hip so the walk cycle can swing them. Grounded boots sit
-              at the foot of each leg. A reviewing agent rests mid-bend. */}
-          <group ref={leftLeg} position={[-0.14, 0.56, 0]} rotation={[legRest, 0, 0]}>
+          {/* Grounded boots sit at the foot of each leg. */}
+          <group ref={leftLeg} position={[-0.14, 0.56, 0]}>
             <mesh position={[0, -0.28, 0]} castShadow>
               <boxGeometry args={[0.16, 0.56, 0.18]} />
               <meshStandardMaterial color={BOOT} roughness={0.85} />
@@ -1013,7 +926,7 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
               <meshStandardMaterial color={BOOT} roughness={0.85} />
             </mesh>
           </group>
-          <group ref={rightLeg} position={[0.14, 0.56, 0]} rotation={[legRest, 0, 0]}>
+          <group ref={rightLeg} position={[0.14, 0.56, 0]}>
             <mesh position={[0, -0.28, 0]} castShadow>
               <boxGeometry args={[0.16, 0.56, 0.18]} />
               <meshStandardMaterial color={BOOT} roughness={0.85} />
@@ -1110,12 +1023,11 @@ function Worker({ record, district, slot, chore, scenicWalker, reducedMotion, se
   )
 }
 
-function District({ id, position, records, chores, walkers, index, selectedId, reducedMotion, onSelect }: {
+function District({ id, position, records, chores, index, selectedId, reducedMotion, onSelect }: {
   id: DistrictId
   position: THREE.Vector3
   records: AgentRecord[]
   chores: Map<string, ChoreKind>
-  walkers: ReadonlySet<string>
   index: number
   selectedId?: string
   reducedMotion: boolean
@@ -1149,7 +1061,7 @@ function District({ id, position, records, chores, walkers, index, selectedId, r
         <meshBasicMaterial color={districtUniform[id].accent} transparent opacity={0.4} depthWrite={false} />
       </mesh>
       {records.map((record, slotIndex) => (
-        <Worker key={record.id} record={record} district={id} slot={slots[slotIndex]} chore={chores.get(record.id)} scenicWalker={walkers.has(record.id)} reducedMotion={reducedMotion} selected={selectedId === record.id} onSelect={onSelect} />
+        <Worker key={record.id} record={record} district={id} slot={slots[slotIndex]} chore={chores.get(record.id)} reducedMotion={reducedMotion} selected={selectedId === record.id} onSelect={onSelect} />
       ))}
       {/* A bounded vertical stagger by district keeps the central hall labels apart, and
           the label sits below the worker marker in render priority. No distanceFactor:
@@ -1234,11 +1146,9 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
 
   // Bounded chore staffing, recomputed per snapshot (not per frame). Non-stale past and
   // unknown workers are eligible, so the live roster still visibly does chores.
+  // Idle, ambient, and chore poses keep the village alive when nothing is active,
+  // so no worker needs to roam to fill silence.
   const chores = useMemo(() => assignChores(records), [records])
-
-  // A few deterministic scenic walkers, so the village is not motionless when the
-  // live roster reports no active workers. Recomputed per snapshot, never per frame.
-  const walkers = useMemo(() => selectScenicWalkers(records, chores), [records, chores])
 
   const grouped = useMemo(() => (Object.keys(districtMeta) as DistrictId[]).map((id) => ({
     id,
@@ -1289,7 +1199,6 @@ function VillageWorld({ records, selectedId, reducedMotion, onSelect }: {
           position={layout.districts[group.id] ?? new THREE.Vector3()}
           records={group.records}
           chores={chores}
-          walkers={walkers}
           index={index}
           selectedId={selectedId}
           reducedMotion={reducedMotion}
