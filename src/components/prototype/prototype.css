@@ -72,7 +72,8 @@
 
 /* --- HUD shell ---------------------------------------------------------- */
 
-.proto-hud { position: absolute; inset: 0; pointer-events: none; }
+.proto-hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+/* Scene (drei Html) labels carry single-digit z-indexes so they always sit below HUD. */
 
 .proto-corner {
   position: absolute;
@@ -86,21 +87,35 @@
 .proto-corner--bl { bottom: 18px; left: 18px; align-items: flex-start; }
 .proto-corner--br { bottom: 18px; right: 18px; align-items: flex-end; }
 
+.proto-hud button:active { transform: scale(.97); transition: transform 160ms ease-out; }
+
 .proto-topbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
 .proto-kicker { color: var(--proto-gold); font-size: 10px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; }
 .proto-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
-.proto-sim-pill {
+.proto-disclosure { margin: 0; color: var(--proto-muted); font-size: 11px; line-height: 1.4; }
+
+.proto-source-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--proto-border);
+  border-radius: 4px;
+}
+.proto-source-switch button {
   padding: 3px 8px;
-  color: var(--proto-ember);
-  background: rgba(224, 137, 59, .12);
-  border: 1px solid rgba(224, 137, 59, .6);
+  color: var(--proto-muted);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 3px;
   font-family: var(--proto-mono);
   font-size: 9px;
-  letter-spacing: .18em;
+  letter-spacing: .14em;
   text-transform: uppercase;
+  cursor: pointer;
 }
-.proto-disclosure { margin: 0; color: var(--proto-muted); font-size: 11px; line-height: 1.4; }
+.proto-source-switch button.is-active { color: var(--proto-ember); background: rgba(224, 137, 59, .12); border-color: rgba(224, 137, 59, .6); }
+.proto-source-live:disabled { opacity: .42; cursor: not-allowed; }
 
 .proto-counts {
   display: flex;
@@ -206,6 +221,7 @@
 .proto-status-text--complete { color: #a3c48c; }
 .proto-status-text--stale { color: var(--proto-ember); }
 .proto-status-text--unknown, .proto-status-text--waiting { color: var(--proto-muted); }
+.proto-status-text--past { color: #9aa3ad; }
 .proto-source { color: var(--proto-teal); }
 .proto-inspector-event { margin: 11px 0 0; color: #cdd8d2; font-size: 11px; line-height: 1.45; }
 .proto-inspector-event span { display: block; margin-bottom: 3px; color: var(--proto-muted); font-family: var(--proto-mono); font-size: 8px; letter-spacing: .14em; text-transform: uppercase; }
@@ -229,6 +245,15 @@
 .proto-roster-caret { transition: transform .18s ease; }
 .proto-roster.is-open .proto-roster-caret { transform: rotate(180deg); }
 .proto-roster-list { display: flex; flex-direction: column; border-top: 1px solid var(--proto-border); max-height: min(44vh, 320px); overflow-y: auto; }
+.proto-roster-past {
+  margin: 0;
+  padding: 7px 12px 3px;
+  color: var(--proto-muted);
+  font-family: var(--proto-mono);
+  font-size: 8px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
 .proto-roster-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: var(--proto-text); background: transparent; border: 0; border-bottom: 1px solid var(--proto-border-soft); text-align: left; cursor: pointer; }
 .proto-roster-row:last-child { border-bottom: 0; }
 .proto-roster-row:hover { background: rgba(255, 255, 255, .05); }
@@ -239,6 +264,7 @@
 .proto-status--complete { background: #8fb277; color: #0b1207; }
 .proto-status--waiting { background: #7d8a83; color: #0c1216; }
 .proto-status--unknown { background: #4b555c; color: var(--proto-text); }
+.proto-status--past { background: #3a3f45; color: #9aa3ad; }
 .proto-status--stale { background: var(--proto-ember); color: #180d05; }
 .proto-roster-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .proto-roster-name { font-size: 12px; font-weight: 600; }
@@ -400,7 +426,8 @@
     width: auto;
     align-items: stretch;
   }
-  .proto-inspector { max-height: 42vh; }
+  /* Bottom sheet of at most 40% height, so the focused worker stays visible. */
+  .proto-inspector { max-height: 40vh; }
 
   .proto-corner--bl { left: 10px; right: 10px; align-items: stretch; }
   .proto-roster { max-width: none; }

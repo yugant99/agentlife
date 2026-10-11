@@ -4,15 +4,18 @@ import { createRoot } from 'react-dom/client'
 import { CourtyardHud } from './components/prototype/CourtyardHud'
 import { CourtyardScene } from './components/prototype/CourtyardScene'
 import type { RenderStats } from './components/prototype/CourtyardScene'
+import { preferredDistrict } from './components/prototype/agentModel'
 import * as city from './components/prototype/city'
 import {
-  DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario, selectNextAttention,
+  DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
+import { nextAttentionCity, toCitySnapshot } from './components/prototype/scenarioBridge'
 import './components/prototype/prototype.css'
 
 // Standalone synthetic prototype: the Mythic City. No telemetry hook and no fetch; the
-// scenario is the only source of truth and is clearly labelled a simulation. The original
-// app (index.html / src/main.tsx) is untouched.
+// scenario is the only source of truth, bridged into CityAgent snapshots, and is
+// clearly labelled a simulation. The original app (index.html / src/main.tsx) is
+// untouched. Live feed wiring arrives with Lane A; the source switch stays inert.
 
 function supportsWebGL(): boolean {
   try {
@@ -51,12 +54,27 @@ function PrototypeApp() {
   const [view, setView] = useState<city.View>({ scale: 'city' })
   const [focusRevision, setFocusRevision] = useState(0)
   const [ready, setReady] = useState(false)
+  const [source, setSource] = useState<'live' | 'simulation'>('simulation')
   const [reducedMotion, setReducedMotion] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   )
   const webgl = useMemo(() => supportsWebGL(), [])
   const debug = useMemo(() => readDebugFlag(), [])
   const statsSink = useRef<RenderStats>({ calls: 0, triangles: 0, frameMs: 0, width: 0, height: 0, pixelRatio: 1 })
+
+  // The scenario is the only producer until Lane A merges. Memoized on the scenario
+  // so selection and camera moves never rebuild worker identity.
+  const snapshot = useMemo(() => toCitySnapshot(state, Date.now()), [state])
+  const agents = snapshot.agents
+  const celebrationBy = useMemo(() => {
+    const map: Record<string, number> = {}
+    const byNative = new Map(state.agents.map((agent) => [agent.id, agent]))
+    for (const celebration of state.celebrations) {
+      const agent = byNative.get(celebration.agentId)
+      if (agent) map[`${agent.provider}:${agent.id}`] = celebration.id
+    }
+    return map
+  }, [state])
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -99,9 +117,9 @@ function PrototypeApp() {
   // stuck inspector.
   const escape = useCallback(() => {
     if (view.scale === 'agent') {
-      const agent = state.agents.find((entry) => entry.id === view.agentId)
+      const agent = agents.find((entry) => entry.id === view.agentId)
       if (agent) {
-        goDistrict(city.districtForStation(agent.station))
+        goDistrict(preferredDistrict(agent))
         return
       }
       goCity()
@@ -110,7 +128,7 @@ function PrototypeApp() {
     } else {
       setSelectedId(undefined)
     }
-  }, [view, state.agents, goDistrict, goCity])
+  }, [view, agents, goDistrict, goCity])
 
   const replay = useCallback(() => {
     setState(resetScenario())
@@ -123,9 +141,9 @@ function PrototypeApp() {
   const step = useCallback(() => setState((current) => advanceScenario(current)), [])
 
   const needsYou = useCallback(() => {
-    const next = selectNextAttention(state, selectedId)
+    const next = nextAttentionCity(agents, selectedId)
     if (next) selectAgent(next)
-  }, [state, selectedId, selectAgent])
+  }, [agents, selectedId, selectAgent])
 
   const handleReady = useCallback(() => setReady(true), [])
 
@@ -150,7 +168,9 @@ function PrototypeApp() {
           )}
         >
           <CourtyardScene
-            state={state}
+            agents={agents}
+            celebrationBy={celebrationBy}
+            shipCount={state.ships.length}
             selectedId={selectedId}
             view={view}
             focusRevision={focusRevision}
@@ -170,10 +190,13 @@ function PrototypeApp() {
         </div>
       )}
       <CourtyardHud
-        state={state}
+        agents={agents}
+        lastEvent={state.lastEvent}
         playing={playing}
+        finished={isFinished(state)}
         view={view}
         selectedId={selectedId}
+        source={source}
         showStats={debug}
         statsSink={statsSink}
         onCity={goCity}
@@ -183,6 +206,7 @@ function PrototypeApp() {
         onReplay={replay}
         onStep={step}
         onNeedsYou={needsYou}
+        onSource={setSource}
       />
       {webgl && !ready && <div className="proto-loading" role="status">Preparing the city…</div>}
     </main>
