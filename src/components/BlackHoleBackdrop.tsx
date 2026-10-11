@@ -24,6 +24,9 @@ const vertexShader = /* glsl */ `
 const fragmentShader = /* glsl */ `
   varying vec3 vDir;
   uniform float uTime;
+  uniform float uSize;
+  uniform float uBright;
+  uniform vec3 uDir;
 
   float hash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -45,10 +48,11 @@ const fragmentShader = /* glsl */ `
     // viewport, subordinate above the village, with margin to the top edge. The
     // mesh copies the camera orientation each frame, so this direction is
     // screen-fixed and orbit cannot move the hole out of frame.
-    vec3 C = normalize(vec3(0.18, 0.24, -1.0));
+    vec3 C = normalize(uDir);
     float cosA = clamp(dot(d, C), -1.0, 1.0);
 
-    float rs = 0.055;
+    float S = uSize;
+    float rs = 0.055 * S;
 
     // Sparse dim stars, kept out of the hole's immediate glare. The mask uses cosA
     // directly (cos 0.1984 ≈ 0.9804, cos 0.0744 ≈ 0.9972) so no acos is needed here.
@@ -57,14 +61,12 @@ const fragmentShader = /* glsl */ `
     float sh = hash13(cell);
     float starDist = length(fract(gridPos) - 0.5);
     float starPoint = 1.0 - smoothstep(0.02, 0.10, starDist);
-    float starMask = 1.0 - smoothstep(0.9804, 0.9972, cosA);
+    float starMask = 1.0 - smoothstep(cos(0.1984 * S), cos(0.0744 * S), cosA);
     float twinkle = 0.6 + 0.4 * sin(uTime * 1.6 + sh * 43.0);
     col += vec3(0.50, 0.60, 0.80) * starPoint * step(0.986, sh) * twinkle * 0.32 * starMask;
 
-    // Bounded detail region: past ~0.64 rad (cosA < 0.80) every disk/glow/rim term
-    // is below ~1% strength, so the costly acos plus the exp/atan cluster runs only
-    // for near-hole pixels. Look is unchanged; still a single draw pass.
-    if (cosA > 0.80) {
+    // Bounded detail region scaled with the effect; if S grows, the costly branch grows.
+    if (cosA > cos(min(0.64 * S, 1.45))) {
       float ang = acos(cosA);
       vec3 R = normalize(cross(vec3(0.0, 1.0, 0.0), C));
       vec3 U = cross(C, R);
@@ -73,27 +75,27 @@ const fragmentShader = /* glsl */ `
       float uy = dot(off, U);
 
       // Cool diffuse glow around the hole.
-      float glow = exp(-pow(ang / 0.30, 2.0));
-      col += vec3(0.10, 0.16, 0.32) * glow * 0.55;
+      float glow = exp(-pow(ang / (0.30 * S), 2.0));
+      col += vec3(0.10, 0.16, 0.32) * glow * 0.55 * uBright;
 
       // Dark central silhouette.
-      float shadow = 1.0 - smoothstep(rs - 0.010, rs + 0.010, ang);
+      float shadow = 1.0 - smoothstep(rs - 0.010 * S, rs + 0.010 * S, ang);
       col *= 1.0 - shadow * 0.96;
 
       // One-sided brightness (stylized beaming): the left flank runs hotter.
-      float beam = 1.0 + 0.55 * (1.0 - smoothstep(-0.16, 0.10, ux));
+      float beam = 1.0 + 0.55 * (1.0 - smoothstep(-0.16 * S, 0.10 * S, ux));
 
       // Near-side disk: a thin bright band crossing just below the shadow.
-      float frontY = -0.052 - 0.30 * ux * ux;
-      float front = exp(-pow((uy - frontY) / 0.016, 2.0)) * exp(-pow(ux / 0.20, 2.0));
+      float frontY = (-0.052 - 0.30 * ux * ux) * S;
+      float front = exp(-pow((uy - frontY) / (0.016 * S), 2.0)) * exp(-pow(ux / (0.20 * S), 2.0));
 
       // Far-side lensed arch: bent light arcing over the shadow.
-      float archY = 0.070 + 1.4 * ux * ux;
-      float arch = exp(-pow((uy - archY) / 0.013, 2.0)) * exp(-pow(ux / 0.17, 2.0));
+      float archY = (0.070 + 1.4 * ux * ux) * S;
+      float arch = exp(-pow((uy - archY) / (0.013 * S), 2.0)) * exp(-pow(ux / (0.17 * S), 2.0));
 
       // Faint lower echo of the bend, mostly swallowed by the shadow.
-      float echoY = -0.105 + 1.1 * ux * ux;
-      float echo = exp(-pow((uy - echoY) / 0.012, 2.0)) * exp(-pow(ux / 0.15, 2.0)) * 0.5;
+      float echoY = (-0.105 + 1.1 * ux * ux) * S;
+      float echo = exp(-pow((uy - echoY) / (0.012 * S), 2.0)) * exp(-pow(ux / (0.15 * S), 2.0)) * 0.5;
 
       // Slow shimmer along the disk; frozen to STILL_TIME under reduced motion.
       float flow = 0.86 + 0.14 * sin(atan(uy - frontY, ux) * 2.0 - uTime * 0.4);
@@ -101,32 +103,57 @@ const fragmentShader = /* glsl */ `
       vec3 diskWarm = vec3(1.00, 0.80, 0.55);
       vec3 diskHot = vec3(1.00, 0.93, 0.78);
       float diskLight = (front * 1.15 + arch * 0.9 + echo * 0.6) * beam * flow;
-      col += mix(diskWarm, diskHot, clamp(front, 0.0, 1.0)) * diskLight;
+      col += mix(diskWarm, diskHot, clamp(front, 0.0, 1.0)) * (diskLight * uBright);
 
       // Thin photon rim kissing the shadow edge.
-      float rim = exp(-pow((ang - rs) / 0.0045, 2.0));
-      col += vec3(0.85, 0.90, 1.0) * rim * 0.55;
+      float rim = exp(-pow((ang - rs) / (0.0045 * S), 2.0));
+      col += vec3(0.85, 0.90, 1.0) * (rim * 0.55 * uBright);
     }
 
     gl_FragColor = vec4(col, 1.0);
   }
 `
 
-export function BlackHoleBackdrop({ reducedMotion }: { reducedMotion: boolean }) {
+export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, direction = [0.18, 0.24, -1.0], paused = false }: {
+  reducedMotion: boolean
+  // Optional, backward-compatible composition controls. Defaults reproduce the original
+  // rendering exactly, so the main app's usage is unchanged.
+  size?: number
+  brightness?: number
+  direction?: [number, number, number]
+  paused?: boolean
+}) {
   const mesh = useRef<THREE.Mesh>(null)
-  // Read inside the frame loop through a ref so the prop never captures a stale value.
+  // Read inside the frame loop through refs so props never capture stale values.
   const reducedRef = useRef(reducedMotion)
   reducedRef.current = reducedMotion
+  const pausedRef = useRef(paused)
+  pausedRef.current = paused
+  // Local clock: advances only while not paused, so Pause freezes the sky and preserves
+  // phase. Reduced motion holds the still frame instead.
+  const time = useRef(STILL_TIME)
+  const last = useRef<number | null>(null)
 
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader,
     fragmentShader,
-    uniforms: { uTime: { value: STILL_TIME } },
+    uniforms: {
+      uTime: { value: STILL_TIME },
+      uSize: { value: size },
+      uBright: { value: brightness },
+      uDir: { value: new THREE.Vector3(direction[0], direction[1], direction[2]).normalize() },
+    },
     side: THREE.BackSide,
     depthWrite: false,
     depthTest: false,
     fog: false,
   }), [])
+
+  useEffect(() => {
+    material.uniforms.uSize.value = size
+    material.uniforms.uBright.value = brightness
+    ;(material.uniforms.uDir.value as THREE.Vector3).set(direction[0], direction[1], direction[2]).normalize()
+  }, [material, size, brightness, direction])
   const geometry = useMemo(() => new THREE.SphereGeometry(SKY_RADIUS, 32, 24), [])
 
   useEffect(() => () => {
@@ -138,17 +165,21 @@ export function BlackHoleBackdrop({ reducedMotion }: { reducedMotion: boolean })
     const node = mesh.current
     if (!node) return
     // Camera-relative sky: follow position and orientation so the composition holds
-    // the same quiet upper-screen placement through orbit. Both copies reuse the
-    // mesh's own vectors, so no per-frame allocations occur here.
+    // the same upper-screen placement through orbit. Both copies reuse the mesh's own
+    // vectors, so no per-frame allocations occur here.
     node.position.copy(camera.position)
     node.quaternion.copy(camera.quaternion)
+    const now = clock.elapsedTime
+    const delta = last.current === null ? 0 : Math.max(0, now - last.current)
+    last.current = now
     if (reducedRef.current) {
       if (material.uniforms.uTime.value !== STILL_TIME) material.uniforms.uTime.value = STILL_TIME
       return
     }
-    // Pause animation when the tab is hidden; no per-frame allocations here.
-    if (typeof document !== 'undefined' && document.hidden) return
-    material.uniforms.uTime.value = clock.elapsedTime
+    // Pause freezes the sky; hidden tabs skip the delta. Phase is preserved either way.
+    if (pausedRef.current || (typeof document !== 'undefined' && document.hidden)) return
+    time.current += Math.min(delta, 0.06)
+    material.uniforms.uTime.value = time.current
   })
 
   return (

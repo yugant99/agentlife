@@ -4,13 +4,14 @@ import { createRoot } from 'react-dom/client'
 import { CourtyardHud } from './components/prototype/CourtyardHud'
 import { CourtyardScene } from './components/prototype/CourtyardScene'
 import type { RenderStats } from './components/prototype/CourtyardScene'
+import * as city from './components/prototype/city'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario, selectNextAttention,
 } from './components/prototype/scenario'
 import './components/prototype/prototype.css'
 
-// Standalone synthetic prototype. No telemetry hook and no fetch: the scenario is the
-// only source of truth, and it is clearly labelled as a simulation in the HUD. The main
+// Standalone synthetic prototype: the Mythic City. No telemetry hook and no fetch; the
+// scenario is the only source of truth and is clearly labelled a simulation. The original
 // app (index.html / src/main.tsx) is untouched.
 
 function supportsWebGL(): boolean {
@@ -22,8 +23,6 @@ function supportsWebGL(): boolean {
   }
 }
 
-// Minimal local boundary so a renderer error degrades to HTML controls instead of an
-// indefinite loading overlay.
 class SceneBoundary extends Component<{ fallback: ReactNode; onError: () => void; children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() {
@@ -49,7 +48,7 @@ function PrototypeApp() {
   const [state, setState] = useState(() => createScenario())
   const [playing, setPlaying] = useState(true)
   const [selectedId, setSelectedId] = useState<string>()
-  const [focusMode, setFocusMode] = useState<'overview' | 'agent'>('overview')
+  const [view, setView] = useState<city.View>({ scale: 'city' })
   const [focusRevision, setFocusRevision] = useState(0)
   const [ready, setReady] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(() =>
@@ -66,9 +65,8 @@ function PrototypeApp() {
     return () => query.removeEventListener('change', update)
   }, [])
 
-  // Safety net: never leave the "Preparing" overlay up if the canvas never reports ready.
   useEffect(() => {
-    const id = window.setTimeout(() => setReady(true), 5000)
+    const id = window.setTimeout(() => setReady(true), 6000)
     return () => window.clearTimeout(id)
   }, [])
 
@@ -79,25 +77,46 @@ function PrototypeApp() {
     return () => window.clearTimeout(id)
   }, [playing, state])
 
-  const select = useCallback((id: string) => {
-    setSelectedId(id)
-    setFocusMode('agent')
+  const goCity = useCallback(() => {
+    setSelectedId(undefined)
+    setView({ scale: 'city' })
     setFocusRevision((value) => value + 1)
   }, [])
 
-  // Escape, Back, the inspector close, and Overview all do the same thing: clear the
-  // selection and return cleanly to the overview with no lingering panel.
-  const toOverview = useCallback(() => {
+  const goDistrict = useCallback((districtId: city.DistrictId) => {
     setSelectedId(undefined)
-    setFocusMode('overview')
+    setView({ scale: 'district', districtId })
     setFocusRevision((value) => value + 1)
   }, [])
+
+  const selectAgent = useCallback((agentId: string) => {
+    setSelectedId(agentId)
+    setView({ scale: 'agent', agentId })
+    setFocusRevision((value) => value + 1)
+  }, [])
+
+  // Escape backs out one useful level: agent -> its district -> city. Never leaves a
+  // stuck inspector.
+  const escape = useCallback(() => {
+    if (view.scale === 'agent') {
+      const agent = state.agents.find((entry) => entry.id === view.agentId)
+      if (agent) {
+        goDistrict(city.districtForStation(agent.station))
+        return
+      }
+      goCity()
+    } else if (view.scale === 'district') {
+      goCity()
+    } else {
+      setSelectedId(undefined)
+    }
+  }, [view, state.agents, goDistrict, goCity])
 
   const replay = useCallback(() => {
     setState(resetScenario())
     setPlaying(true)
     setSelectedId(undefined)
-    setFocusMode('overview')
+    setView({ scale: 'city' })
     setFocusRevision((value) => value + 1)
   }, [])
 
@@ -105,18 +124,18 @@ function PrototypeApp() {
 
   const needsYou = useCallback(() => {
     const next = selectNextAttention(state, selectedId)
-    if (next) select(next)
-  }, [state, selectedId, select])
+    if (next) selectAgent(next)
+  }, [state, selectedId, selectAgent])
 
   const handleReady = useCallback(() => setReady(true), [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') toOverview()
+      if (event.key === 'Escape') escape()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toOverview])
+  }, [escape])
 
   return (
     <main className="proto-app">
@@ -125,7 +144,7 @@ function PrototypeApp() {
           onError={handleReady}
           fallback={(
             <div className="proto-world-fallback proto-world-fallback--bounds">
-              <p>3D courtyard could not render.</p>
+              <p>3D city could not render.</p>
               <p>The roster and inspector remain available as plain HTML.</p>
             </div>
           )}
@@ -133,36 +152,39 @@ function PrototypeApp() {
           <CourtyardScene
             state={state}
             selectedId={selectedId}
-            focus={{ mode: focusMode, id: selectedId }}
+            view={view}
             focusRevision={focusRevision}
             paused={!playing}
             reducedMotion={reducedMotion}
             showStats={debug}
             statsSink={statsSink}
-            onSelect={select}
+            onSelect={selectAgent}
+            onDistrict={goDistrict}
             onReady={handleReady}
           />
         </SceneBoundary>
       ) : (
         <div className="proto-world-fallback proto-world-fallback--bounds">
-          <p>3D courtyard unavailable.</p>
+          <p>3D city unavailable.</p>
           <p>WebGL is not available in this browser. The roster and inspector still describe every agent.</p>
         </div>
       )}
       <CourtyardHud
         state={state}
         playing={playing}
+        view={view}
         selectedId={selectedId}
         showStats={debug}
         statsSink={statsSink}
-        onSelect={select}
-        onOverview={toOverview}
+        onCity={goCity}
+        onDistrict={goDistrict}
+        onSelect={selectAgent}
         onTogglePlay={() => setPlaying((value) => !value)}
         onReplay={replay}
         onStep={step}
         onNeedsYou={needsYou}
       />
-      {webgl && !ready && <div className="proto-loading" role="status">Preparing the courtyard…</div>}
+      {webgl && !ready && <div className="proto-loading" role="status">Preparing the city…</div>}
     </main>
   )
 }

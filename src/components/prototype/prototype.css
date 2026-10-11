@@ -270,9 +270,100 @@
 .proto-marker.is-attention .proto-marker-status { color: var(--proto-gold); }
 .proto-marker.is-working .proto-marker-status { color: var(--proto-teal); }
 
-.proto-station-label { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 3px 9px; background: rgba(10, 17, 22, .6); border: 1px solid var(--proto-border-soft); border-radius: 4px; white-space: nowrap; }
-.proto-station-label span { font-size: 10px; font-weight: 600; letter-spacing: .05em; color: #cdd8d2; }
-.proto-station-label small { font-family: var(--proto-mono); font-size: 7px; letter-spacing: .08em; text-transform: uppercase; color: var(--proto-muted); }
+.proto-district-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 9px;
+  color: var(--proto-text);
+  background: rgba(10, 17, 22, .72);
+  border: 1px solid var(--proto-border);
+  border-radius: 4px;
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.proto-district-label:hover { background: rgba(20, 32, 40, .92); border-color: var(--proto-gold); }
+.proto-district-label span { font-size: 11px; font-weight: 600; }
+.proto-district-label small { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 8px; }
+
+.proto-districts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px;
+  background: var(--proto-panel);
+  border: 1px solid var(--proto-border);
+  border-radius: 6px;
+  backdrop-filter: blur(9px);
+  max-height: 32vh;
+  overflow-y: auto;
+}
+.proto-district-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  color: var(--proto-text);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+.proto-district-row:hover { background: rgba(255, 255, 255, .06); }
+.proto-district-row.is-active { background: rgba(217, 176, 90, .13); box-shadow: inset 2px 0 0 var(--proto-gold); }
+.proto-district-name { font-size: 12px; font-weight: 600; }
+.proto-district-count { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
+.proto-district-count.is-none { color: #c08c48; }
+
+.proto-districtbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--proto-panel);
+  border: 1px solid var(--proto-border);
+  border-radius: 6px;
+  backdrop-filter: blur(9px);
+}
+.proto-districtbar-head { display: flex; align-items: center; gap: 7px; }
+.proto-districtbar-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  color: var(--proto-text);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--proto-border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.proto-districtbar-head button:hover { background: rgba(255, 255, 255, .12); }
+.proto-districtbar-sep { color: var(--proto-muted); }
+.proto-districtbar-head strong { font-size: 13px; font-weight: 600; }
+.proto-districtbar-empty { margin: 0; color: #c08c48; font-family: var(--proto-mono); font-size: 10px; }
+.proto-districtbar-workers { display: flex; flex-wrap: wrap; gap: 5px; }
+.proto-districtbar-workers button {
+  padding: 4px 8px;
+  color: var(--proto-text);
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid var(--proto-border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.proto-districtbar-workers button:hover { background: rgba(255, 255, 255, .12); }
+.proto-districtbar-workers button.is-selected { background: rgba(217, 176, 90, .14); border-color: var(--proto-gold); }
+
+.proto-inspector-actions { display: flex; gap: 8px; margin-top: 12px; }
+.proto-inspector-actions .proto-inspector-back { margin-top: 0; }
 
 /* --- Focus visibility and reduced motion -------------------------------- */
 
@@ -299,6 +390,7 @@
   .proto-controls button { flex: 1 1 auto; justify-content: center; }
   .proto-hint { display: none; }
   .proto-event { font-size: 10px; }
+  .proto-districts { max-height: 24vh; }
 
   .proto-corner--tr {
     top: auto;

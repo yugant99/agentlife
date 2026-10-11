@@ -1,16 +1,17 @@
 import {
-  ArrowCounterClockwise, ArrowLeft, ArrowRight, ArrowsOut, CaretDown, CheckCircle, CloudSlash,
+  ArrowCounterClockwise, ArrowLeft, ArrowRight, Buildings, CaretDown, CheckCircle, CloudSlash,
   Flag, FlagBanner, Gauge, Hammer, HardHat, Hourglass, List, MapTrifold, Pause, Play, WarningCircle, X,
 } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import * as city from './city'
+import type { DistrictId, StationId } from './city'
 import type { RenderStats } from './CourtyardScene'
-import type { ScenarioAgent, ScenarioState, StationId } from './scenario'
+import type { ScenarioAgent, ScenarioState } from './scenario'
 import { PROVIDER_LABEL, STATION_META, isFinished, scenarioCounts, statusLabel } from './scenario'
 
-// The HUD is a thin overlay: a dark, low-chrome command shell over a full-bleed canvas.
-// It owns no scene state. Counts, roster and inspector read the same synthetic scenario
-// the scene renders, so status meaning never depends on colour or animation.
+// Thin dark command shell over a full-bleed canvas. It owns no scene state: counts,
+// district navigator, roster and inspector all read the same synthetic scenario.
 
 const STATION_ICON: Record<StationId, typeof Hammer> = {
   forge: Hammer,
@@ -36,10 +37,11 @@ function statusKey(agent: ScenarioAgent) {
   return agent.workState
 }
 
-function Inspector({ agent, event, onOverview }: {
+function Inspector({ agent, event, onBack, onCity }: {
   agent: ScenarioAgent
   event: string
-  onOverview: () => void
+  onBack: () => void
+  onCity: () => void
 }) {
   const Icon = statusIcon(agent)
   const Station = STATION_ICON[agent.station]
@@ -48,7 +50,7 @@ function Inspector({ agent, event, onOverview }: {
       <div className="proto-inspector-head">
         <Station size={15} weight="duotone" />
         <span>{STATION_META[agent.station].name}</span>
-        <button type="button" onClick={onOverview} aria-label="Close inspector and return to overview"><X size={13} weight="bold" /></button>
+        <button type="button" onClick={onCity} aria-label="Close inspector and return to the city"><X size={13} weight="bold" /></button>
       </div>
       <h2>{agent.name}</h2>
       <p className="proto-inspector-role">{agent.role} · Synthetic worker</p>
@@ -59,7 +61,10 @@ function Inspector({ agent, event, onOverview }: {
         <div><dt>Example provider</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
       </dl>
       <p className="proto-inspector-event"><span>Last scenario event</span>{event}</p>
-      <button type="button" className="proto-inspector-back" onClick={onOverview}><ArrowLeft size={13} weight="bold" /> Back to overview</button>
+      <div className="proto-inspector-actions">
+        <button type="button" className="proto-inspector-back" onClick={onBack}><ArrowLeft size={13} weight="bold" /> District</button>
+        <button type="button" className="proto-inspector-back" onClick={onCity}><Buildings size={13} weight="bold" /> City</button>
+      </div>
     </section>
   )
 }
@@ -83,12 +88,7 @@ function Roster({ state, selectedId, onSelect }: { state: ScenarioState; selecte
 
   return (
     <div className={`proto-roster ${open ? 'is-open' : ''}`}>
-      <button
-        type="button"
-        className="proto-roster-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
+      <button type="button" className="proto-roster-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <List size={15} weight="bold" />
         <span>Roster</span>
         <small>{state.agents.length}</small>
@@ -106,7 +106,7 @@ function Roster({ state, selectedId, onSelect }: { state: ScenarioState; selecte
                 type="button"
                 className={`proto-roster-row ${selectedId === agent.id ? 'is-selected' : ''}`}
                 aria-pressed={selectedId === agent.id}
-                onClick={() => onSelect(agent.id)}
+                onClick={() => { setOpen(false); onSelect(agent.id) }}
                 onKeyDown={(event) => onKeyDown(event, index)}
               >
                 <span className={`proto-status proto-status--${statusKey(agent)}`} aria-hidden="true"><Icon size={15} weight="bold" /></span>
@@ -130,8 +130,6 @@ function StatsPanel({ sink }: { sink: { current: RenderStats } }) {
   const canvas = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    // DOM writes on a slow interval; deliberately not React state, so nothing here
-    // re-renders the HUD per frame.
     const id = window.setInterval(() => {
       const stats = sink.current
       if (calls.current) calls.current.textContent = String(stats.calls || '—')
@@ -156,31 +154,81 @@ function StatsPanel({ sink }: { sink: { current: RenderStats } }) {
   )
 }
 
+function DistrictBar({ district, workers, selectedId, onCity, onSelect }: {
+  district: city.District
+  workers: ScenarioAgent[]
+  selectedId?: string
+  onCity: () => void
+  onSelect: (id: string) => void
+}) {
+  return (
+    <div className="proto-districtbar">
+      <div className="proto-districtbar-head">
+        <button type="button" onClick={onCity}><Buildings size={12} weight="bold" /> City</button>
+        <span className="proto-districtbar-sep">/</span>
+        <strong>{district.name}</strong>
+      </div>
+      {workers.length === 0 ? (
+        <p className="proto-districtbar-empty">No workers assigned</p>
+      ) : (
+        <div className="proto-districtbar-workers">
+          {workers.map((agent) => (
+            <button
+              key={agent.id}
+              type="button"
+              className={selectedId === agent.id ? 'is-selected' : ''}
+              onClick={() => onSelect(agent.id)}
+            >
+              {agent.name} · {statusLabel(agent)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export interface CourtyardHudProps {
   state: ScenarioState
   playing: boolean
+  view: city.View
   selectedId?: string
   showStats: boolean
   statsSink: { current: RenderStats }
+  onCity: () => void
+  onDistrict: (id: DistrictId) => void
   onSelect: (id: string) => void
-  onOverview: () => void
   onTogglePlay: () => void
   onReplay: () => void
   onStep: () => void
   onNeedsYou: () => void
 }
 
-export function CourtyardHud({ state, playing, selectedId, showStats, statsSink, onSelect, onOverview, onTogglePlay, onReplay, onStep, onNeedsYou }: CourtyardHudProps) {
+export function CourtyardHud({ state, playing, view, selectedId, showStats, statsSink, onCity, onDistrict, onSelect, onTogglePlay, onReplay, onStep, onNeedsYou }: CourtyardHudProps) {
   const counts = scenarioCounts(state)
   const selected = state.agents.find((agent) => agent.id === selectedId)
   const finished = isFinished(state)
+  const [districtsOpen, setDistrictsOpen] = useState(false)
+
+  const districtCounts = new Map<DistrictId, number>()
+  for (const agent of state.agents) {
+    const id = city.districtForStation(agent.station)
+    districtCounts.set(id, (districtCounts.get(id) ?? 0) + 1)
+  }
+  const currentDistrict = view.scale === 'district' ? view.districtId : undefined
+  const selectedAgent = state.agents.find((agent) => agent.id === (view.scale === 'agent' ? view.agentId : undefined))
+  const activeDistrictId = currentDistrict ?? (selectedAgent ? city.districtForStation(selectedAgent.station) : undefined)
+  const activeDistrict = activeDistrictId ? city.districtById(activeDistrictId) : undefined
+  const districtWorkers = activeDistrictId
+    ? state.agents.filter((agent) => city.districtForStation(agent.station) === activeDistrictId)
+    : []
 
   return (
     <div className="proto-hud">
       <div className="proto-corner proto-corner--tl">
         <header className="proto-topbar">
           <span className="proto-kicker">Mythic</span>
-          <h1>Command Courtyard</h1>
+          <h1>Mythic City</h1>
           <span className="proto-sim-pill">Simulation</span>
         </header>
         <p className="proto-disclosure">Synthetic scenario — no agents are running.</p>
@@ -194,22 +242,63 @@ export function CourtyardHud({ state, playing, selectedId, showStats, statsSink,
           </button>
         </div>
 
-        <div className="proto-controls" role="group" aria-label="Scenario controls">
+        <div className="proto-controls" role="group" aria-label="View and scenario controls">
+          <button type="button" className={view.scale === 'city' ? 'is-active' : ''} onClick={onCity} aria-pressed={view.scale === 'city'}>
+            <Buildings size={13} weight="bold" /> City
+          </button>
+          <button type="button" className={districtsOpen ? 'is-active' : ''} onClick={() => setDistrictsOpen((value) => !value)} aria-expanded={districtsOpen}>
+            <MapTrifold size={13} weight="bold" /> Districts
+          </button>
           <button type="button" className={playing ? 'is-active' : ''} onClick={onTogglePlay} aria-pressed={playing}>
             {playing ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}{playing ? 'Pause' : 'Play'}
           </button>
           <button type="button" onClick={onStep} disabled={finished}>Step <ArrowRight size={12} weight="bold" /></button>
           <button type="button" onClick={onReplay}><ArrowCounterClockwise size={13} weight="bold" /> Replay</button>
-          <button type="button" onClick={onOverview}><ArrowsOut size={13} weight="bold" /> Overview</button>
         </div>
 
+        {districtsOpen && (
+          <div className="proto-districts" role="group" aria-label="District navigator">
+            {city.DISTRICTS.map((district) => {
+              const count = districtCounts.get(district.id) ?? 0
+              return (
+                <button
+                  key={district.id}
+                  type="button"
+                  className={`proto-district-row ${currentDistrict === district.id ? 'is-active' : ''}`}
+                  onClick={() => { setDistrictsOpen(false); onDistrict(district.id) }}
+                >
+                  <span className="proto-district-name">{district.name}</span>
+                  <span className={`proto-district-count ${count === 0 ? 'is-none' : ''}`}>
+                    {count === 0 ? 'No workers assigned' : `${count} ${count === 1 ? 'worker' : 'workers'}`}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {activeDistrict && (
+          <DistrictBar
+            district={activeDistrict}
+            workers={districtWorkers}
+            selectedId={selectedId}
+            onCity={onCity}
+            onSelect={onSelect}
+          />
+        )}
+
         <p className="proto-event"><span>Scenario</span>{state.lastEvent}</p>
-        <p className="proto-hint">Click a figure or pick from the roster. Escape returns to the overview.</p>
+        <p className="proto-hint">City shows all districts. Pick a district or a figure; Escape steps back one level.</p>
       </div>
 
       {selected && (
         <div className="proto-corner proto-corner--tr">
-          <Inspector agent={selected} event={state.lastEvent} onOverview={onOverview} />
+          <Inspector
+            agent={selected}
+            event={state.lastEvent}
+            onBack={() => onDistrict(city.districtForStation(selected.station))}
+            onCity={onCity}
+          />
         </div>
       )}
 

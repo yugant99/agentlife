@@ -1,223 +1,118 @@
-# Command Courtyard prototype
+# Mythic City prototype (plan 001)
 
-A standalone, synthetic-simulation prototype that replaces the tiny-workers-on-a-huge-map
-scene with a compact, playable command courtyard. It is **not** wired into the main app:
-`index.html` / `src/main.tsx` / `src/App.tsx` / `WorldScene.tsx` are untouched, and the
-default `npm run build` output is byte-identical to before this work.
+A standalone, synthetic-simulation prototype: an ambitious, inhabited harbor city under a
+black-hole sky, with three viewing scales and moving city life. It is the implementation of
+`plans/001-living-cosmic-city.md`.
 
 > **Simulation only.** Every value shown is authored fixture data. There is no telemetry
 > hook, no `fetch`, no server call, and no live agent. The HUD carries a permanent
 > `SIMULATION` pill and the disclosure "Synthetic scenario — no agents are running."
 
+The prior courtyard and the cancelled "restore the village" attempt are both superseded.
+Internal file/export names (`CourtyardScene.tsx`, `CourtyardHud.tsx`, `CourtyardCharacter.tsx`,
+`CourtyardScene`/`CourtyardHud`) are retained from the earlier slice purely to avoid churn;
+the rendered product is **Mythic City**.
+
 ## How to view
 
 - Dev: start the normal dev server (`npm run web`) and open `/prototype.html`.
   Vite serves that standalone HTML entry, which loads `/src/prototype-main.tsx`.
-- It is a separate HTML entry, not a query parameter or a route inside the main app.
-- If WebGL cannot start, a plain fallback message is shown and the roster/inspector remain
+- Renderer stats are opt-in: add `?debug=1` (desktop only; hidden on mobile).
+- If WebGL cannot start, a plain fallback message is shown and the roster/inspector stay
   usable because they are HTML, not canvas.
 
-## What works
+## The city
 
-**Scene (world-first).** A ~18-unit stone platform in blue-hour twilight: charcoal stone,
-dark timber, moss, teal cloth, and warm golden practicals. Ground is layered (platform base,
-top surface, stone edging, deliberate paths, moss and rock scatter) rather than empty flat
-ground. Three stations with distinct silhouettes:
+A dense, connected composition built from shared/instanced primitives, no external assets:
 
-- **Forge** — stone forge with an emissive hearth, chimney, anvil on a stump, barrel, and a
-  localized warm point light plus a small animated flame cluster.
-- **Planning Table** — a large timber table with a parchment survey map, loose map pieces,
-  a scroll, two stools, and a warm lantern.
-- **Signal Post** — a tall mast with a crossbeam, a swaying banner/pennant, crates, and a
-  warm brazier.
+- **Six neighborhoods** on a 10-unit lattice (citadel, foundry, archive, observatory, port,
+  gateway) so streets are always clear — composed, not random cuboids.
+- **Buildings**: a deterministic 10-unit lattice yields 87 composed buildings, instanced as
+  three archetype layers (podium / main / upper) with solid roof caps and spires, plus sparse
+  instanced emissive facade windows. No per-building textures. Background buildings receive
+  shadows but do not cast (one shadow-casting key light only).
+- **Infrastructure**: a street grid, a diagonal canal with two bridges, a southwest harbor
+  with quay walls and piers, lit boulevards with instanced lamps, and an elevated rail loop.
+- **Landmarks**: stepped citadel with a lit crown ring; foundry with chimneys, smoke and two
+  turning cranes; archive rotunda with a column ring; observatory dome with a turning dish;
+  gateway arch with a glowing portal.
+- **Sky**: the original `BlackHoleBackdrop` is restored above the skyline. It is an original
+  stylized shader approximation, **not** actual ray tracing. It is sized and positioned
+  explicitly for the city through new **optional** props (`size`, `brightness`, `direction`)
+  whose defaults reproduce the original rendering exactly, so the main app is unchanged.
 
-Enclosure comes from a timber hall silhouette (two halls with posts, gable ends, a door and
-lit windows) and six pines placed on a broad dusk terrain that extends well past the
-platform, so the frame is filled with ground and depth instead of empty space. The sky is
-an original static `DuskSky` (cool zenith, warm horizon, one small soft moon and a few dim
-stars, no time uniform) — the old black-hole backdrop is no longer imported here. Repeated
-ground detail is instanced: flagstone pavers, cobble paths, edging stones, moss, grass tufts
-and outer rocks.
+## Three viewing scales
 
-**Characters.** Five chunky ~1.9-unit figures with visible heads, eyes, hands, boots,
-optional beards, optional cloaks, three headwear kinds, and five distinct cloth
-accents/props (hammer, tongs, scroll, ledger, banner). Work gestures differ by station:
-hammer at the forge, read a scroll at the table, hold a flag at the signal post. Idle
-figures breathe/sway. Stale, unknown, waiting and completed figures never perform a work
-gesture — they hold a neutral idle.
+1. **City** — the whole connected composition, skyline and black hole. District labels show
+   meaningful names and actual assigned-worker counts; clicking a label focuses it.
+2. **District** — the camera moves into a neighborhood work plaza. Unassigned districts are
+   reachable and clearly state "No workers assigned".
+3. **Agent** — the inspector, a readable figure and its task-specific gesture.
 
-**Camera.** A tilted near-isometric overview frames the whole courtyard; selecting an agent
-travels the camera in ~420 ms and frames that figure. Framing is computed from the live
-canvas size and the camera FOV: the overview targets ~90 CSS px agent height at 1440×900
-and focus targets ~152 px. The courtyard is framed tightly on the stations (peripheral rocks
-may fall outside the frame) while the broad outer terrain fills the background, so smaller
-screens re-frame from the same math without cropping a worker. `OrbitControls` allows
-moderate orbit around the focus target; the rig only drives the camera while travelling and
-leaves orbit alone otherwise. `Esc`, the inspector close, its "Back" button and **Overview**
-all do the same thing: clear the selection and return cleanly to the overview with no
-lingering panel. Station name plaques are shown in overview and hidden in focus (the
-inspector carries the station then), so they never clip at a side edge or overlap the
-inspector.
+Controls: **City**, **Districts** (compact navigator), **Needs you**, **Roster**, plus
+**Pause/Play**, **Step**, **Replay**. `Escape` backs out one useful level (agent → its
+district → city) and never leaves a stuck inspector. District and City return controls are
+present in the inspector.
 
-**HUD.** Dark, low-chrome overlay: "MYTHIC / Command Courtyard" identity, the persistent
-`SIMULATION` pill and disclosure, small counts for Working / Needs you / Complete, and a
-**Needs you** button that cycles eligible (fresh, needs-input) agents. A collapsible roster
-lists all five with a status icon, station and explicit status; it supports `Arrow`/`Home`/
-`End` keyboard navigation and shows focus outlines. The inspector (name, role, source,
-station, task, explicit status, last scenario event) sits independently of the roster so it
-is never pushed below a long list. In-world markers show name/status on hover, on selection,
-and always for a needs-you agent.
+**Camera**: 650 ms for the city/district journey, 420 ms for agent focus, smoothstep eased,
+retargeting from the current position when interrupted. Orbit is never reset by unrelated
+HUD updates. Reduced motion snaps directly.
 
-## Scenario controls
+## Motion
 
-- **Play / Pause** — advances the deterministic timeline one step per ~5.2 s, or freezes it.
-  Pause also freezes scenario-linked character work and celebrations (ambient scenery such as
-  the forge flame and banner keeps moving).
-- **Step** — advances exactly one scenario step manually (disabled at the end).
-- **Replay** — resets to the deterministic start and resumes playing.
-- **Overview** — returns the camera to the overview.
+- One articulated 3-car tram loops the elevated rail in ~35 s, oriented to the tangent.
+- Three boats follow canal/harbor routes (46–62 s). Sparse street couriers follow road
+  segments with deterministic phases.
+- Observatory dish rotates over ~24 s; foundry crane jibs turn slowly; chimney steam rises.
+- Active work gestures happen only for fresh active workers; unknown/stale/paused workers do
+  not simulate work. Completion is a bounded one-shot that does not replay on render.
+- All motion uses a local clock that advances only while the scenario is running, so
+  **Pause freezes traffic and ambient scenery** and resumes from where it stopped; hidden-tab
+  deltas are skipped and resumption deltas clamped. Reduced motion keeps traffic static and
+  poses legible. No per-frame React state.
 
-Timeline (initial cast: 2 active, 1 needs-input, 1 unknown, 1 completed):
+## Source semantics (unchanged)
 
-| Step | Event |
-| --- | --- |
-| 0 | Scenario started — five agents checked in. |
-| 1 | Astrid received the human call and raised the banner. (needs-input → active) |
-| 2 | Astrid paused the run — a second decision is needed. (active → needs-input) |
-| 3 | Astrid resumed after the call was made. (needs-input → active) |
-| 4 | Astrid completed the banner run. (**celebration**) |
-| 5 | Eirik checked in and asks for a schema call. (unknown → needs-input) |
-| 6 | Eirik received the call and started forging. (needs-input → active) |
-| 7 | Eirik's snapshot went stale — work is paused, not counted. |
-| 8 | Eirik's snapshot recovered and work resumed. |
-| 9 | Sigrid completed the planning pass. (**celebration**) |
-
-The table covers the required arc: an `active → needs-input → complete` cycle, one agent
-going stale and recovering, and exactly one completion transition per completed agent.
-
-## Source semantics
-
-Source, work state and freshness are three separate fields and are never collapsed into one
-"status":
-
-- `source` — always `'simulation'`. Asserted by the focused test; there is no live record.
-- `provider` — a synthetic **example** attribution only (`codex | opencode | claude-code |
-  manual`), shown as "Example provider". No model identifiers are shown anywhere.
-- `workState` — `active | needs-input | unknown | complete | waiting`.
-- `freshness` — `fresh | stale`.
-
-Consequences enforced by pure helpers in `scenario.ts`:
-
-- `canPerformWork(agent)` is true only when `freshness === 'fresh' && workState === 'active'`.
-  A stale snapshot never performs a work gesture; unknown never works.
-- Stale is a **freshness**, not a work state: a stale agent still reports its last work state
-  in the inspector ("Stale snapshot · last active") but drops out of the working count.
-- Counts keep the split: working requires fresh+active, needs-you requires fresh+needs-input,
-  complete requires fresh+complete.
-- Celebrations are emitted only by a real transition into `complete`, never for the baseline
-  completed agent. Applying the same step again cannot re-emit (the agent is already
-  complete), and the scene plays a celebration by celebration **id** exactly once, so
-  re-renders, late frames and reloads cannot retrigger it.
-
-## Reduced motion
-
-`prefers-reduced-motion` is read on initial load and on change. Under it: no camera travel
-(instant snap), no scene loops (a still, legible stance per state), still flames/banner, and
-CSS animations/transitions are disabled. No per-frame React state is used anywhere; the
-renderer-stats panel writes DOM text on a slow interval from a shared mutable sink.
-
-## Renderer details panel
-
-Opt-in and desktop-only. Add `?debug=1` to the URL to render it; it is hidden entirely on
-mobile. Draw calls, triangle count, mean frame interval, and canvas size are sampled a few
-times per second from the live renderer. No frame-rate figure is claimed; only the measured
-mean interval between rendered frames is shown.
+- `source` is always `'simulation'` (asserted by the focused test).
+- `provider` is a synthetic **example** attribution only; no model IDs are shown.
+- `workState` and `freshness` stay separate; staleness is never a work state. Only a fresh,
+  active worker performs a work gesture; unknown never works. Celebrations fire only on a real
+  transition into `complete` and are keyed by id, so they cannot replay.
 
 ## Files
 
-- `prototype.html` — standalone Vite HTML entry.
-- `src/prototype-main.tsx` — state owner (scenario, selection, camera revision, reduced
-  motion) and composition.
-- `src/components/prototype/scenario.ts` — deterministic fixture + pure reducer/selectors.
-- `src/components/prototype/CourtyardScene.tsx` — canvas, lights, ground, stations, camera
-  rig, stats reporter.
-- `src/components/prototype/CourtyardCharacter.tsx` — character mesh and pose/gesture logic.
-- `src/components/prototype/CourtyardHud.tsx` — overlay HUD (identity, counts, controls,
-  inspector, roster, stats).
-- `src/components/prototype/prototype.css` — scoped `proto-` styles (reuses the bundled
-  Chillax font).
-- `src/components/prototype/scenario.test.mjs` — focused `node:test` for the pure helpers.
+- `prototype.html`, `src/prototype-main.tsx` — entry and view/scenario state.
+- `src/components/prototype/city.ts` — deterministic city layout (districts, buildings,
+  streets, water, bridges, piers, rail, motion routes).
+- `src/components/prototype/CourtyardScene.tsx` — canvas, lights, sky, city, stations,
+  characters, traffic, camera rig, stats (file name retained).
+- `src/components/prototype/CourtyardHud.tsx` — HUD with City/Districts/Needs you/Roster,
+  district navigator, inspector, roster, stats (file name retained).
+- `src/components/prototype/CourtyardCharacter.tsx` — the five workers (unchanged).
+- `src/components/prototype/scenario.ts` + `scenario.test.mjs` — deterministic scenario.
+- `src/components/BlackHoleBackdrop.tsx` — optional, backward-compatible size/position props.
+- `src/components/prototype/prototype.css` — scoped `proto-` styles.
 
 ## Checks actually run
 
-All run from the repository root; all passed.
+All run from the repository root after the final edits; all passed.
 
-- `npm run build` — `tsc -b && vite build`. Exit 0. The emitted `dist/index.html` and bundle
-  hashes are unchanged from before this work, confirming the prototype is not part of the
-  default app bundle.
+- `npm run build` — `tsc -b && vite build`. Exit 0. Note the main-app JS bundle hash changed
+  (`dist/assets/index-Cdpa9hJA.js`) because `BlackHoleBackdrop` gained optional props; with
+  default props its rendering is identical, so main-app behavior is unchanged.
+- `node --experimental-strip-types --test src/components/prototype/*.test.mjs` — 7/7 pass.
 - `npm run test:telemetry` — 2/2 pass.
-- `node --experimental-strip-types --test src/components/prototype/*.test.mjs` — 7/7 pass:
-  initial diversity, stale disables work, unknown cannot work, completion fires once and
-  never replays, replay resets deterministically, needs-you cycles in stable order, finished
-  scenario does not advance.
-
-## Second pass (post-review) changes
-
-Applied after the first browser review, all within the same file scope:
-
-- Removed the reused black-hole backdrop from the prototype entirely; added an original
-  static `DuskSky` (small soft moon, few dim stars, no luminous ring, no time uniform).
-- Strengthened lighting: warmer key from the camera side, higher ambient/hemisphere fill,
-  lighter slate/moss ground and materials so agents and ground read instead of going black.
-- Closer framing and larger apparent agents (~90 px overview, ~152 px focus at 1440×900),
-  with a broad outer terrain so the courtyard no longer floats in empty space.
-- Workers now stand on the camera side of their props and are turned 3/4 toward the view;
-  heads/hands are slightly larger with shoulder cloth and a nose for face readability.
-- Crafted ground: instanced flagstone pavers, cobbled paths, edging, moss and grass tufts,
-  firewood stack, workbench, bench and foreground rocks.
-- Stronger station silhouettes: forge hearth/hood/workbench/firewood, a larger planning
-  table with candles and raised map, and a taller signal mast with cloth banner; the hall
-  gained posts, gable ends, a door and lit windows.
-- Station labels: overview-only, ground-anchored inside the courtyard (no edge clipping, no
-  inspector overlap).
-- Narrow layout: heading + disclosure + counts + controls stack at the top, the inspector
-  becomes a bounded bottom sheet, the roster is a bottom bar, debug stats are hidden on
-  mobile, and there is no horizontal overflow. The close/Back/Esc/Overview actions were
-  unified so the inspector never lingers.
-- Performance info is now opt-in (`?debug=1`) and desktop-only, labelled honestly as a mean
-  frame interval.
-- Provenance fixed: every fixture agent is `source === 'simulation'` (asserted by a test);
-  the provider field is renamed to an example attribution and no model IDs are shown.
-- Pause now freezes a local animation clock instead of deleting pending celebrations, so a
-  celebration in flight resumes; reduced motion still settles to a still pose without
-  playing. No per-frame React state.
-- WebGL precheck, a minimal error boundary and a ready timeout guarantee the "Preparing"
-  overlay clears and the HTML controls stay usable.
-- **Ground surface corrected to y = 0.** Both platform cylinders were lowered by .36 so the
-  courtyard walking surface is exactly y = 0; the outer terrain was moved below the platform
-  base (y = -0.4) so it never cuts the platform; and every on-surface item (pavers, moss,
-  edging, paths, characters, stations, grass, outer rocks, trees, halls, foreground rocks)
-  was re-seated coherently. Previously the cap top sat at y = .36, burying all ground detail
-  and the characters' feet. The moss scale also had a constant expression
-  (`((i*5)%5) === 0`); it now varies deterministically as `0.4 + (i % 4) * 0.12`.
-- **Scoped border-box reset** for `.proto-app` and all descendants/pseudo-elements, so
-  percentage widths include padding and borders. This keeps the counts row and the inspector
-  (including its close control) inside the viewport on narrow screens; DOM `scrollWidth`
-  alone had not caught the hidden overflow.
 
 ## Known gaps / unverified
 
-- **Prototype production bundle is not verified here.** The default `vite build` only has
-  `index.html` as an input, so `prototype.html` is not bundled by `npm run build`. A separate
-  prototype build check (e.g. adding `prototype.html` as a Rollup input) is left to the lead.
-  Type-checking of every prototype file *is* covered by `tsc -b`.
-- **No browser run performed by the implementer.** Camera framing, agent pixel heights,
-  shadow quality, draw-call count and celebration timing are implemented to the stated
-  targets but were not observed in a browser here. The opt-in renderer panel exists so the
-  lead can read the real numbers during review.
-- **Stress configuration is explicitly not implemented or measured** in this slice (no
-  20-agent scenario), so multi-agent fill performance is unverified.
-- The forge/planning/signal practical lights are three point lights with no shadows; contact
-  grounding relies on the single shadow-casting directional key.
-- Orbit is intentionally bounded (`minPolarAngle 0.3`, `maxPolarAngle 1.35`, no pan). There
-  is no separate "reset view" control beyond **Overview**.
+- **No browser run by the implementer.** City density, the black hole's placement/size, the
+  three camera scales, labels, mobile panel bounds, pause/reduced-motion freezing, and
+  frame behavior were not observed here; the lead will review and measure. The opt-in
+  `?debug=1` panel reports draw calls, triangles and mean frame interval.
+- **Prototype production bundle is not built here**; the default `vite build` only has
+  `index.html` as input. `tsc -b` does type-check every prototype file.
+- The "ray traced blackhole" phrasing is not literally true: the sky is a stylized shader
+  approximation. This was kept honest rather than renamed to a ray tracer.
+- Traffic routes are authored approximations over the grid; they follow streets/canals but
+  are not collision-checked against every building corner.
+- Building count (87) is read from the deterministic layout data; no frame rate is claimed.
