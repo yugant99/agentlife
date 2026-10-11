@@ -1,0 +1,4 @@
+{"type":"custom-title","sessionId":"claude-demo-3","cwd":"/work/city-demo","customTitle":"Harbor survey"}
+{"type":"user","sessionId":"claude-demo-3","cwd":"/work/city-demo","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"synthetic prompt body that must never appear in a snapshot"}]}}
+{"type":"assistant","sessionId":"claude-demo-3","cwd":"/work/city-demo","timestamp":"2026-01-01T00:00:10.000Z","message":{"model":"demo-model","content":[{"type":"text","text":"synthetic reply body that must never appear in a snapshot"}]}}
+{"type":"system","sessionId":"claude-demo-3","cwd":"/work/city-demo","content":"synthetic system note"}

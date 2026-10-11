@@ -1,0 +1,5 @@
+{"session_id":"claude-demo-1","hook_event_name":"PreToolUse","tool_name":"Bash","ts":1767225600000}
+{"session_id":"claude-demo-9","hook_event_name":"Notification","tool_name":"","ts":1767225610000}
+{"session_id":"claude-demo-10","hook_event_name":"Stop","tool_name":"","ts":1767225620000}
+{"session_id":"","hook_event_name":"Stop","tool_name":"","ts":1767225630000}
+not json at all

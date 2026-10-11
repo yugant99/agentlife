@@ -1,0 +1,6 @@
+{"type":"session_meta","id":"codex-demo-1","cwd":"/work/city-demo","originator":"user","source":"cli","model":"demo-model"}
+{"type":"event_msg","payload":{"type":"task_started"}}
+{"type":"event_msg","payload":{"type":"item_started","item":{"type":"CommandExecution","command":"npm test -- filter"}}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"Reasoning"}}}
+{"type":"response_item","payload":{"type":"message"}}
+{"type":"nonsense_kind","payload":{"type":"unknown_future_shape"}}

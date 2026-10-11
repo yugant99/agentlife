@@ -1,0 +1,3 @@
+{"type":"session_meta","id":"codex-demo-2","cwd":"/work/city-demo","originator":"user","source":"cli"}
+{"type":"event_msg","payload":{"type":"item_started","item":{"type":"FileChange"}}}
+{"type":"event_msg","payload":{"type":"approval_request:exec","item":{"type":"CommandExecution","command":"git push origin main"}}}
