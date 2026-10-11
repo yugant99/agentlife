@@ -1,23 +1,30 @@
-# Mythic City prototype (plans 001 + 002 Lane B)
+# Mythic City prototype (plans 001 + 002)
 
-A standalone, synthetic-simulation prototype: an ambitious, inhabited harbor city under a
+A standalone prototype: an ambitious, inhabited harbor city under a
 black-hole sky, with three viewing scales, moving city life, and walking workers. It
-implements `plans/001-living-cosmic-city.md` and Lane B of `plans/002-living-agents.md`
-(walking workers and readability; branch `codex/city-walking`).
+implements `plans/001-living-cosmic-city.md` and `plans/002-living-agents.md`
+(walking workers and readability, the live feed, and the integration wiring both
+together).
 
-> **Simulation only.** Every value shown is authored fixture data. There is no telemetry
-> hook, no `fetch`, no server call, and no live agent. The HUD carries a
-> `Simulation · today` source marker and the disclosure "Synthetic scenario — no agents
-> are running." The **Live** source button is present but inert until Lane A merges.
+> **Two sources, never mixed.** Live agents are the default when the city feed
+> answers; otherwise the scene shows the synthetic simulation with the disclosure
+> "Synthetic scenario — no agents are running." The **Live / Simulation · today**
+> switch toggles between them; Live is disabled while the feed is unavailable.
+> Losing the feed keeps the last live snapshot (agents age into stale by time) with
+> a calm "Live feed paused" notice — the scene never silently switches to
+> simulation. In Live mode Step and Replay are hidden (Pause still freezes motion);
+> counts, the "Needs you" cycle, the roster and the inspector all read the live
+> `CityAgent` records.
 
 The prior courtyard and the cancelled "restore the village" attempt are both superseded.
 Internal file/export names (`CourtyardScene.tsx`, `CourtyardHud.tsx`, `CourtyardCharacter.tsx`,
 `CourtyardScene`/`CourtyardHud`) are retained from the earlier slice purely to avoid churn;
 the rendered product is **Mythic City**.
 
-The frozen contract is `src/components/prototype/agentModel.ts` (lead-owned; Lane B only
-reads it). The scene, HUD and roster take `CityAgent[]`; the simulation scenario is one
-producer of `CityAgent` snapshots via `scenarioBridge.ts`.
+The frozen contract is `src/components/prototype/agentModel.ts` (lead-owned; the lanes
+only read it). The scene, HUD and roster take `CityAgent[]`; the simulation scenario
+(via `scenarioBridge.ts`) and the live feed (via `src/hooks/useCityFeed.ts`) are the
+two producers — the HUD shows one at a time and never mixes them.
 
 ## How to view
 
@@ -26,6 +33,23 @@ producer of `CityAgent` snapshots via `scenarioBridge.ts`.
 - Renderer stats are opt-in: add `?debug=1` (desktop only; hidden on mobile).
 - If WebGL cannot start, a plain fallback message is shown and the roster/inspector stay
   usable because they are HTML, not canvas.
+
+## Live mode
+
+- Run the app server plus Vite together (`npm run dev`), then open `/prototype.html`.
+  The server exposes `GET /api/city` and `GET /api/city/stream` (loopback only); the
+  prototype reads them through `src/hooks/useCityFeed.ts` (snapshot fetch plus SSE,
+  with polling and wall-clock ageing as fallback).
+- Scope: set `COMMAND_CENTER_SCOPE_CWD` in `.env` to the repository root to watch,
+  e.g. `COMMAND_CENTER_SCOPE_CWD=/path/to/your/project`. Every worktree path that
+  scope reports belongs to the city too. Only `CityAgent` fields leave the server —
+  raw commands, prompts, messages and file contents never do.
+- Optional exact Claude Code states: `scripts/claude-hook.mjs` documents a settings
+  snippet you may install yourself. The hook appends only
+  `{session_id, hook_event_name, tool_name, ts}` records; when hook events exist they
+  win over transcript inference. Do not paste a real local path into the repo.
+- Without the server the feed reports unavailable and the city stays in simulation;
+  the Live button is disabled until a snapshot arrives.
 
 ## The city
 
@@ -90,8 +114,9 @@ A dense, connected composition built from shared/instanced primitives, no extern
 3. **Agent** — the inspector, a readable figure and its task-specific gesture.
 
 Controls: **City**, **Districts** (compact navigator), **Needs you**, **Roster**, plus
-**Pause/Play**, **Step**, **Replay**, and the **Live / Simulation · today** source switch
-(Live inert until Lane A). `Escape` backs out one useful level (agent → its district →
+**Pause/Play** and, in simulation only, **Step** and **Replay**, alongside the
+**Live / Simulation · today** source switch (Live is the default when the feed
+answers; it is disabled while the feed is unavailable). `Escape` backs out one useful level (agent → its district →
 city) and never leaves a stuck inspector. District and City return controls are present
 in the inspector.
 
@@ -116,7 +141,9 @@ HUD updates. Reduced motion snaps directly.
 
 ## Source semantics
 
-- `source` is always `'simulation'` (asserted by the focused tests).
+- `source` is `'simulation'` for scenario-bridged agents (asserted by the focused
+  bridge tests) and `'live'` for feed agents; the HUD switch selects which producer
+  is shown and never mixes them.
 - `provider` is a synthetic **example** attribution only; no model IDs are shown. Contract
   ids are provider-scoped (`provider:native`).
 - `workState`, `freshness`, `phase` and `toolKind` stay separate; staleness is never a work
@@ -129,9 +156,11 @@ HUD updates. Reduced motion snaps directly.
 
 ## Files (Lane B owns `src/components/prototype/**` except `agentModel.ts`, plus entry/docs)
 
-- `prototype.html`, `src/prototype-main.tsx` — entry and view/scenario state; the scenario
-  is bridged to `CityAgent[]` (memoized on scenario steps so selection never rebuilds
-  worker identity).
+- `prototype.html`, `src/prototype-main.tsx` — entry and view/scenario state; the active
+  producer (live feed via `src/hooks/useCityFeed.ts`, defaulting to live when it
+  answers, else the simulation bridged to `CityAgent[]`) supplies the scene. The
+  simulation snapshot stays memoized on scenario steps so selection never rebuilds
+  worker identity; switching sources resets the view to the city.
 - `src/components/prototype/city.ts` — deterministic city layout (districts, buildings,
   streets, water, bridges, piers, rail, motion routes) plus work spots and carves.
 - `src/components/prototype/cityGraph.ts` + `cityGraph.test.mjs` — pure road graph.
@@ -147,7 +176,9 @@ HUD updates. Reduced motion snaps directly.
 - `src/components/prototype/Workers.tsx` — walker reconciler + frame loop, rings, beams,
   tethers, fades (new).
 - `src/components/prototype/CourtyardHud.tsx` — HUD with City/Districts/Needs you/Roster,
-  source switch, district navigator, inspector, roster with Past, stats (file name
+  working source switch, district navigator, inspector (provider, workspace, phase,
+  tool kind and freshness from `CityAgent`), roster with Past, paused-feed notice,
+  stats (file name
   retained). Scene labels sit below HUD layers (`z-index: 10` on the HUD, single-digit
   drei `zIndexRange` in the scene).
 - `src/components/prototype/CourtyardCharacter.tsx` — the worker figure: walk cycle,

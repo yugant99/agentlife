@@ -221,6 +221,22 @@ export function selectRendered<T extends Pick<CityAgent, 'id' | 'workState' | 'f
   return { rendered: eligible.slice(0, MAX_RENDERED_WORKERS), overflow: eligible.slice(MAX_RENDERED_WORKERS) }
 }
 
+/**
+ * Historical agents that should play the walk-out. Only agents already on screen leave:
+ * an agent first seen as historical (e.g. old sessions in the first live snapshot) never
+ * spawns, and one that finished fading has no runtime left, so it cannot respawn.
+ */
+export function selectLeaving<T extends Pick<CityAgent, 'id' | 'freshness' | 'lastSignalAt'>>(
+  agents: T[],
+  onScreen: ReadonlySet<string>,
+  max: number,
+): T[] {
+  return agents
+    .filter((agent) => agent.freshness === 'historical' && onScreen.has(agent.id))
+    .sort((a, b) => b.lastSignalAt - a.lastSignalAt)
+    .slice(0, max)
+}
+
 // --- Gestures and status rings ------------------------------------------------------
 
 export type WorkerGesture =

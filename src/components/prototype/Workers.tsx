@@ -10,7 +10,7 @@ import { buildRoadGraph, pathToSpot } from './cityGraph'
 import type { RoadGraph } from './cityGraph'
 import {
   canLeaveSpot, childOffset, dominantToolKind, gestureForWorker, layoutTargets,
-  ringFor, RING_COLORS, selectRendered, targetDistrict, tripSpeed,
+  ringFor, RING_COLORS, selectRendered, targetDistrict, tripSpeed, selectLeaving,
 } from './movement'
 import type { ToolSample } from './movement'
 import { ARRIVAL_FADE_MS, arrivalOpacity, departureOpacity, DEPARTURE_FADE_MS, shouldTether } from './lifecycle'
@@ -157,10 +157,7 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
     const byId = new Map(all.map((agent) => [agent.id, agent]))
     const { rendered } = selectRendered(all)
     const renderedIds = new Set(rendered.map((agent) => agent.id))
-    const historical = all
-      .filter((agent) => agent.freshness === 'historical')
-      .sort((a, b) => b.lastSignalAt - a.lastSignalAt)
-      .slice(0, MAX_LEAVING)
+    const historical = selectLeaving(all, new Set(runtimes.current.keys()), MAX_LEAVING)
     const historicalIds = new Set(historical.map((agent) => agent.id))
     const visible = [...rendered, ...historical]
     const targets = layoutTargets(visible, CENTERS)

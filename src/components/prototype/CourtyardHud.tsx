@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { preferredDistrict } from './agentModel'
 import type { CityAgent } from './agentModel'
+import type { CityFeedStatus } from '../../hooks/useCityFeed'
 import * as city from './city'
 import type { DistrictId } from './city'
 import type { RenderStats } from './CourtyardScene'
@@ -51,15 +52,26 @@ function assignmentLabel(agent: CityAgent): string {
   return `${agent.phase} · ${tool} → ${district.name}`
 }
 
-function Inspector({ agent, event, onBack, onCity }: {
+function formatSignalAge(ageMs: number): string {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return 'unknown age'
+  if (ageMs < 5_000) return 'just now'
+  if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s ago`
+  if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m ago`
+  return `${Math.floor(ageMs / 3_600_000)}h ago`
+}
+
+function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
   agent: CityAgent
+  source: 'live' | 'simulation'
   event: string
+  eventLabel: string
   onBack: () => void
   onCity: () => void
 }) {
   const Icon = statusIcon(agent)
   const district = city.districtById(preferredDistrict(agent))
   const DistrictIcon = DISTRICT_ICON[district.id]
+  const roleLabel = agent.role?.trim() ? agent.role.trim() : undefined
   return (
     <section className="proto-inspector" aria-live="polite">
       <div className="proto-inspector-head">
@@ -69,15 +81,19 @@ function Inspector({ agent, event, onBack, onCity }: {
       </div>
       <h2>{agent.name}</h2>
       <p className="proto-inspector-role">
-        {agent.role}{agent.depth > 0 ? ` · Sub-agent (depth ${agent.depth})` : ' · Worker'} · {agent.workspace}
+        {roleLabel ? `${roleLabel} · ` : ''}{agent.depth > 0 ? `Sub-agent (depth ${agent.depth})` : 'Worker'} · {agent.workspace}
       </p>
       <dl className="proto-inspector-grid">
         <div><dt>Status</dt><dd className={`proto-status-text proto-status-text--${statusKey(agent)}`}><Icon size={13} weight="bold" />{cityStatusLabel(agent)}</dd></div>
         <div><dt>Assignment</dt><dd>{assignmentLabel(agent)}</dd></div>
-        <div><dt>Source</dt><dd className="proto-source">Simulation · today</dd></div>
-        <div><dt>Example provider</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
+        <div><dt>Source</dt><dd className="proto-source">{source === 'live' ? 'Live' : 'Simulation · today'}</dd></div>
+        <div><dt>{source === 'live' ? 'Provider' : 'Example provider'}</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
+        <div><dt>Workspace</dt><dd>{agent.workspace}</dd></div>
+        <div><dt>Phase</dt><dd>{agent.phase}</dd></div>
+        <div><dt>Tool</dt><dd>{agent.toolKind ?? 'no tool yet'}</dd></div>
+        <div><dt>Freshness</dt><dd>{agent.freshness} · {formatSignalAge(Date.now() - agent.lastSignalAt)}</dd></div>
       </dl>
-      <p className="proto-inspector-event"><span>Last scenario event</span>{event}</p>
+      <p className="proto-inspector-event"><span>{eventLabel}</span>{event}</p>
       <div className="proto-inspector-actions">
         <button type="button" className="proto-inspector-back" onClick={onBack}><ArrowLeft size={13} weight="bold" /> District</button>
         <button type="button" className="proto-inspector-back" onClick={onCity}><Buildings size={13} weight="bold" /> City</button>
@@ -96,12 +112,14 @@ function RosterRow({ agent, selected, onSelect, buttonRef, onKeyDown }: {
   const Icon = statusIcon(agent)
   const district = city.districtById(preferredDistrict(agent))
   const DistrictIcon = DISTRICT_ICON[district.id]
+  const details = `${PROVIDER_LABEL[agent.provider]} · ${agent.workspace} · ${agent.phase} · ${agent.toolKind ?? 'no tool yet'} · ${agent.freshness}`
   return (
     <button
       ref={buttonRef}
       type="button"
       className={`proto-roster-row ${selected ? 'is-selected' : ''}`}
       aria-pressed={selected}
+      title={details}
       onClick={() => onSelect(agent.id)}
       onKeyDown={onKeyDown}
     >
@@ -254,6 +272,10 @@ export interface CourtyardHudProps {
   view: city.View
   selectedId?: string
   source: 'live' | 'simulation'
+  isLive: boolean
+  feedStatus: CityFeedStatus
+  liveAvailable: boolean
+  livePaused: boolean
   showStats: boolean
   statsSink: { current: RenderStats }
   onCity: () => void
@@ -266,7 +288,7 @@ export interface CourtyardHudProps {
   onSource: (source: 'live' | 'simulation') => void
 }
 
-export function CourtyardHud({ agents, lastEvent, playing, finished, view, selectedId, source, showStats, statsSink, onCity, onDistrict, onSelect, onTogglePlay, onReplay, onStep, onNeedsYou, onSource }: CourtyardHudProps) {
+export function CourtyardHud({ agents, lastEvent, playing, finished, view, selectedId, source, isLive, feedStatus, liveAvailable, livePaused, showStats, statsSink, onCity, onDistrict, onSelect, onTogglePlay, onReplay, onStep, onNeedsYou, onSource }: CourtyardHudProps) {
   const counts = cityCounts(agents)
   const selected = agents.find((agent) => agent.id === selectedId)
   const [districtsOpen, setDistrictsOpen] = useState(false)
@@ -294,10 +316,11 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           <div className="proto-source-switch" role="group" aria-label="Agent source">
             <button
               type="button"
-              className="proto-source-live"
-              disabled
-              aria-disabled="true"
-              title="Live feed arrives with Lane A — not wired yet"
+              className={`proto-source-live ${source === 'live' ? 'is-active' : ''}`}
+              aria-pressed={source === 'live'}
+              disabled={!liveAvailable}
+              title={liveAvailable ? 'Show live agents from this machine' : feedStatus === 'connecting' ? 'Connecting to the live feed…' : 'Live feed unavailable'}
+              onClick={() => onSource('live')}
             >
               Live
             </button>
@@ -311,7 +334,14 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
             </button>
           </div>
         </header>
-        <p className="proto-disclosure">Synthetic scenario — no agents are running.</p>
+        {isLive ? (
+          <p className="proto-disclosure">Live agents on this machine — workers walk as their tools change.</p>
+        ) : (
+          <p className="proto-disclosure">Synthetic scenario — no agents are running.</p>
+        )}
+        {livePaused && (
+          <p className="proto-live-paused" role="status">Live feed paused — showing the last snapshot.</p>
+        )}
 
         <div className="proto-counts">
           <div><span>Working</span><strong>{counts.working}</strong></div>
@@ -322,7 +352,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           </button>
         </div>
 
-        <div className="proto-controls" role="group" aria-label="View and scenario controls">
+        <div className="proto-controls" role="group" aria-label={isLive ? 'View controls' : 'View and scenario controls'}>
           <button type="button" className={view.scale === 'city' ? 'is-active' : ''} onClick={onCity} aria-pressed={view.scale === 'city'}>
             <Buildings size={13} weight="bold" /> City
           </button>
@@ -332,8 +362,8 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           <button type="button" className={playing ? 'is-active' : ''} onClick={onTogglePlay} aria-pressed={playing}>
             {playing ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}{playing ? 'Pause' : 'Play'}
           </button>
-          <button type="button" onClick={onStep} disabled={finished}>Step <ArrowRight size={12} weight="bold" /></button>
-          <button type="button" onClick={onReplay}><ArrowCounterClockwise size={13} weight="bold" /> Replay</button>
+          {!isLive && (<button type="button" onClick={onStep} disabled={finished}>Step <ArrowRight size={12} weight="bold" /></button>)}
+          {!isLive && (<button type="button" onClick={onReplay}><ArrowCounterClockwise size={13} weight="bold" /> Replay</button>)}
         </div>
 
         {districtsOpen && (
@@ -367,7 +397,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           />
         )}
 
-        <p className="proto-event"><span>Scenario</span>{lastEvent}</p>
+        <p className="proto-event"><span>{isLive ? 'Live' : 'Scenario'}</span>{lastEvent}</p>
         <p className="proto-hint">City shows all districts. Pick a district or a figure; Escape steps back one level.</p>
       </div>
 
@@ -375,7 +405,9 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
         <div className="proto-corner proto-corner--tr">
           <Inspector
             agent={selected}
+            source={source}
             event={lastEvent}
+            eventLabel={isLive ? 'Live update' : 'Last scenario event'}
             onBack={() => onDistrict(preferredDistrict(selected))}
             onCity={onCity}
           />
