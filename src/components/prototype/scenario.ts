@@ -18,7 +18,12 @@
 export type SourceKind = 'simulation'
 export type ProviderExample = 'codex' | 'opencode' | 'claude-code' | 'manual'
 export type WorkState = 'active' | 'needs-input' | 'unknown' | 'complete' | 'waiting'
-export type Freshness = 'fresh' | 'stale'
+export type Freshness = 'fresh' | 'stale' | 'historical'
+// Local mirrors of the frozen contract (agentModel.ts) so this file stays free of
+// imports and loadable from plain Node tests. The bridge (scenarioBridge.ts) maps
+// these onto real CityAgent records.
+export type Phase = 'thinking' | 'tool' | 'talking' | 'gap' | 'idle'
+export type ToolKind = 'shell' | 'test' | 'edit' | 'read' | 'search' | 'web' | 'ship' | 'delegate' | 'ask' | 'other'
 export type StationId = 'forge' | 'planning-table' | 'signal-post'
 
 export interface ScenarioAgent {
@@ -32,6 +37,16 @@ export interface ScenarioAgent {
   provider: ProviderExample
   workState: WorkState
   freshness: Freshness
+  /** The moment inside a turn; drives the spot gesture through the bridge. */
+  phase?: Phase
+  /** Latest tool category; drives which district the worker walks to. */
+  toolKind?: ToolKind
+  /** Native scenario id of the spawning agent, only when explicitly authored. */
+  parentId?: string
+  /** 0 = root agent, 1 = sub-agent. */
+  depth?: number
+  /** Synthetic folder basename. Never a real path. */
+  workspace?: string
   task: string
   /** Synthetic, deterministic recency label (never a wall-clock read). */
   updated: string
@@ -48,6 +63,8 @@ export interface ScenarioState {
   agents: ScenarioAgent[]
   /** Append-only within a run; cleared by reset. Empty means "nothing to celebrate". */
   celebrations: Celebration[]
+  /** Agent native ids that shipped, in order. Drives the one-shot Port boat. */
+  ships: string[]
   /** Monotonic id source. Restarts at 0 on reset, so consumers must also reset. */
   eventId: number
   lastEvent: string
@@ -59,9 +76,17 @@ export interface ScenarioStep {
     id: string
     workState?: WorkState
     freshness?: Freshness
+    phase?: Phase
+    toolKind?: ToolKind
+    parentId?: string
+    depth?: number
     task?: string
     updated?: string
   }>
+  /** A newly arrived or spawned agent (merged by id, so re-applying is idempotent). */
+  add?: ScenarioAgent
+  /** Native id of an agent whose ship tool fired on this step (one-shot boat). */
+  ship?: string
 }
 
 export const STATION_META: Record<StationId, { name: string; caption: string }> = {
@@ -82,26 +107,33 @@ export const DWELL_MS = 5200
 
 // Initial cast: two active, one needs-input, one unknown, one completed. The completed
 // agent is a baseline outcome, not a fresh event, so it never triggers a celebration.
+// Tool kinds place the opening tableau: forge hands at the Foundry, the planner in
+// the Archive, the signaller at the Gateway court.
 const INITIAL_AGENTS: ScenarioAgent[] = [
   {
     id: 'bjorn', name: 'Bjorn', role: 'Forge lead', station: 'forge', source: 'simulation', provider: 'codex',
-    workState: 'active', freshness: 'fresh', task: 'Hammering the adapter bracket', updated: '2m ago',
+    workState: 'active', freshness: 'fresh', phase: 'tool', toolKind: 'shell', depth: 0, workspace: 'mythic-city',
+    task: 'Hammering the adapter bracket', updated: '2m ago',
   },
   {
     id: 'eirik', name: 'Eirik', role: 'Forge hand', station: 'forge', source: 'simulation', provider: 'opencode',
-    workState: 'unknown', freshness: 'fresh', task: 'No heartbeat reported', updated: '11m ago',
+    workState: 'unknown', freshness: 'fresh', phase: 'idle', depth: 0, workspace: 'mythic-city',
+    task: 'No heartbeat reported', updated: '11m ago',
   },
   {
     id: 'sigrid', name: 'Sigrid', role: 'Planner', station: 'planning-table', source: 'simulation', provider: 'codex',
-    workState: 'active', freshness: 'fresh', task: 'Reading the survey scroll', updated: '1m ago',
+    workState: 'active', freshness: 'fresh', phase: 'tool', toolKind: 'read', depth: 0, workspace: 'mythic-city',
+    task: 'Reading the survey scroll', updated: '1m ago',
   },
   {
     id: 'halvard', name: 'Halvard', role: 'Planner', station: 'planning-table', source: 'simulation', provider: 'manual',
-    workState: 'complete', freshness: 'fresh', task: 'Filed the district ledger', updated: '26m ago',
+    workState: 'complete', freshness: 'fresh', phase: 'idle', toolKind: 'read', depth: 0, workspace: 'mythic-city',
+    task: 'Filed the district ledger', updated: '26m ago',
   },
   {
     id: 'astrid', name: 'Astrid', role: 'Signaller', station: 'signal-post', source: 'simulation', provider: 'opencode',
-    workState: 'needs-input', freshness: 'fresh', task: 'Holds the banner for a human call', updated: '4m ago',
+    workState: 'needs-input', freshness: 'fresh', phase: 'idle', depth: 0, workspace: 'mythic-city',
+    task: 'Holds the banner for a human call', updated: '4m ago',
   },
 ]
 
@@ -109,6 +141,13 @@ const INITIAL_AGENTS: ScenarioAgent[] = [
 //   step 1-4  Astrid goes active -> needs-input -> active -> complete (one celebration)
 //   step 5-8  Eirik goes unknown -> needs-input -> active -> stale -> fresh
 //   step 9    Sigrid completes (one celebration)
+//   step 10   Bjorn switches shell -> test: walks Foundry -> Observatory
+//   step 11   Yrsa arrives through the Gateway arch and walks to the Archive
+//   step 12   Astrid ships (one-shot Port boat) and walks to the Quay
+//   step 13   Bjorn spawns the Loom sub-agent beside the bench
+//   step 14   Sigrid needs input: walks to the Citadel steps
+//   step 15   Eirik goes stale again: sits down
+//   step 16   Halvard turns historical: walks out the Gateway and fades
 // Completion only ever fires on a real transition into `complete`, and never for the
 // baseline completed agent, so an unchanged step or a reload cannot replay it.
 export const SCENARIO_STEPS: ScenarioStep[] = [
@@ -122,6 +161,45 @@ export const SCENARIO_STEPS: ScenarioStep[] = [
   { label: "Eirik's snapshot went stale — work is paused, not counted.", changes: [{ id: 'eirik', freshness: 'stale', task: 'Last known: forging the joinery' }] },
   { label: "Eirik's snapshot recovered and work resumed.", changes: [{ id: 'eirik', freshness: 'fresh', workState: 'active', task: 'Forging the joinery', updated: 'now' }] },
   { label: 'Sigrid completed the planning pass.', changes: [{ id: 'sigrid', workState: 'complete', task: 'Planning pass filed', updated: 'now' }] },
+  {
+    label: 'Bjorn switched to the test bench — walking to the Observatory.',
+    changes: [{ id: 'bjorn', toolKind: 'test', phase: 'tool', task: 'Running the bench trials', updated: 'now' }],
+  },
+  {
+    label: 'Yrsa arrived through the Gateway arch.',
+    changes: [],
+    add: {
+      id: 'yrsa', name: 'Yrsa', role: 'Courier', station: 'signal-post', source: 'simulation', provider: 'manual',
+      workState: 'active', freshness: 'fresh', phase: 'tool', toolKind: 'read', depth: 0, workspace: 'mythic-city',
+      task: 'Carrying the survey satchel', updated: 'now',
+    },
+  },
+  {
+    label: 'Astrid shipped the banner run — a boat leaves the Port.',
+    changes: [{ id: 'astrid', workState: 'active', freshness: 'fresh', phase: 'tool', toolKind: 'ship', task: 'Shipping the banner run', updated: 'now' }],
+    ship: 'astrid',
+  },
+  {
+    label: 'Bjorn looped in a sub-agent beside the bench.',
+    changes: [],
+    add: {
+      id: 'loom', name: 'Loom', role: 'Bench hand', station: 'forge', source: 'simulation', provider: 'codex',
+      workState: 'active', freshness: 'fresh', phase: 'tool', toolKind: 'search', parentId: 'bjorn', depth: 1,
+      workspace: 'mythic-city', task: 'Searching the parts bins', updated: 'now',
+    },
+  },
+  {
+    label: 'Sigrid needs a human call — waiting on the Citadel steps.',
+    changes: [{ id: 'sigrid', workState: 'needs-input', phase: 'idle', task: 'Asks for a harbor call', updated: 'now' }],
+  },
+  {
+    label: "Eirik's snapshot went stale — sitting down.",
+    changes: [{ id: 'eirik', freshness: 'stale', task: 'Last known: forging the joinery' }],
+  },
+  {
+    label: 'Halvard archived to past — walking out the Gateway.',
+    changes: [{ id: 'halvard', freshness: 'historical', phase: 'idle', task: 'Archived: district ledger' }],
+  },
 ]
 
 const cloneAgents = (agents: ScenarioAgent[]): ScenarioAgent[] => agents.map((agent) => ({ ...agent }))
@@ -132,6 +210,7 @@ export function createScenario(): ScenarioState {
     step: 0,
     agents: cloneAgents(INITIAL_AGENTS),
     celebrations: [],
+    ships: [],
     eventId: 0,
     lastEvent: SCENARIO_STEPS[0].label,
   }
@@ -139,20 +218,26 @@ export function createScenario(): ScenarioState {
 
 /**
  * Apply one indexed step on top of the current state. Pure and idempotent for the
- * celebration log: re-applying a step the agents already reflect cannot emit a second
- * celebration, because the transition is determined from the agent's current workState.
+ * celebration and ship logs: re-applying a step the agents already reflect cannot
+ * emit a second celebration or boat, because transitions are determined from the
+ * agent's current workState and ships are keyed by agent id.
  */
 export function applyStep(state: ScenarioState, index: number): ScenarioState {
   const step = SCENARIO_STEPS[index]
   if (!step) return state
   let eventId = state.eventId
   const celebrations = state.celebrations.slice()
-  const agents = state.agents.map((agent) => {
+  const ships = state.ships.slice()
+  let agents = state.agents.map((agent) => {
     const change = step.changes.find((entry) => entry.id === agent.id)
     if (!change) return agent
     const next: ScenarioAgent = { ...agent }
     if (change.workState !== undefined) next.workState = change.workState
     if (change.freshness !== undefined) next.freshness = change.freshness
+    if (change.phase !== undefined) next.phase = change.phase
+    if (change.toolKind !== undefined) next.toolKind = change.toolKind
+    if (change.parentId !== undefined) next.parentId = change.parentId
+    if (change.depth !== undefined) next.depth = change.depth
     if (change.task !== undefined) next.task = change.task
     if (change.updated !== undefined) next.updated = change.updated
     // A celebration is a real transition into completion. The baseline step (index 0)
@@ -163,7 +248,11 @@ export function applyStep(state: ScenarioState, index: number): ScenarioState {
     }
     return next
   })
-  return { step: index, agents, celebrations, eventId, lastEvent: step.label }
+  if (step.add && !agents.some((agent) => agent.id === step.add!.id)) {
+    agents = [...agents, { ...step.add }]
+  }
+  if (step.ship && !ships.includes(step.ship)) ships.push(step.ship)
+  return { step: index, agents, celebrations, ships, eventId, lastEvent: step.label }
 }
 
 export function scenarioLength(): number {

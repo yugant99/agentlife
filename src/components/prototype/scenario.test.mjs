@@ -121,3 +121,40 @@ test('a finished scenario does not advance or re-emit', () => {
   while (!isFinished(state)) state = advanceScenario(state)
   assert.equal(advanceScenario(state), state)
 })
+
+test('arrivals and sub-agents join by id without duplicating on re-apply', () => {
+  const arrivalStep = SCENARIO_STEPS.findIndex((step) => step.add && !step.add.parentId)
+  const spawnStep = SCENARIO_STEPS.findIndex((step) => step.add && step.add.parentId)
+  assert.ok(arrivalStep > 0 && spawnStep > arrivalStep)
+  const arrived = runTo(arrivalStep)
+  const newcomer = arrived.agents.find((agent) => agent.id === SCENARIO_STEPS[arrivalStep].add.id)
+  assert.ok(newcomer)
+  assert.equal(newcomer.source, 'simulation')
+  assert.equal(newcomer.freshness, 'fresh')
+  const spawned = runTo(spawnStep)
+  const child = spawned.agents.find((agent) => agent.id === SCENARIO_STEPS[spawnStep].add.id)
+  assert.ok(child)
+  assert.equal(child.parentId, SCENARIO_STEPS[spawnStep].add.parentId)
+  assert.equal(child.depth, 1)
+  // Re-applying an add step merges instead of duplicating.
+  const again = applyStep(spawned, spawnStep)
+  assert.equal(again.agents.length, spawned.agents.length)
+})
+
+test('tool changes, citadel waits, sitting and leaving are all scripted', () => {
+  const full = runTo(scenarioLength() - 1)
+  const byId = new Map(full.agents.map((agent) => [agent.id, agent]))
+  assert.equal(byId.get('bjorn').toolKind, 'test')
+  assert.equal(byId.get('astrid').toolKind, 'ship')
+  assert.equal(byId.get('sigrid').workState, 'needs-input')
+  assert.equal(byId.get('eirik').freshness, 'stale')
+  assert.equal(byId.get('halvard').freshness, 'historical')
+  // New beats never complete, so the run still emits exactly two celebrations.
+  assert.equal(full.celebrations.length, 2)
+})
+
+test('ship signals log one boat per agent and survive replay', () => {
+  const full = runTo(scenarioLength() - 1)
+  assert.deepEqual(full.ships, ['astrid'])
+  assert.deepEqual(resetScenario().ships, [])
+})
