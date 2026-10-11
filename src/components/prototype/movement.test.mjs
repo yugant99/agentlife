@@ -16,6 +16,7 @@ import {
   targetDistrict,
   tripDurationMs,
   tripSpeed,
+  selectLeaving,
 } from './movement.ts'
 
 const CENTERS = {
@@ -175,4 +176,13 @@ test('status rings use the five semantic colors in priority order', () => {
   assert.equal(ringFor(cityAgent({ phase: 'talking' }), false), 'info')
   assert.equal(ringFor(cityAgent({}), false), 'success')
   assert.equal(ringFor(cityAgent({ workState: 'waiting' }), false), 'muted')
+})
+
+test('only on-screen historical agents walk out, so faded or never-seen ones never respawn', () => {
+  const now = 10_000_000
+  const old = (id, ageMs) => ({ id, freshness: 'historical', lastSignalAt: now - ageMs })
+  const agents = [old('a', 30 * 60_000), old('b', 40 * 60_000), old('c', 50 * 60_000), { id: 'd', freshness: 'fresh', lastSignalAt: now }]
+  assert.deepEqual(selectLeaving(agents, new Set(), 6), [])
+  assert.deepEqual(selectLeaving(agents, new Set(['b', 'c', 'd']), 6).map((agent) => agent.id), ['b', 'c'])
+  assert.deepEqual(selectLeaving(agents, new Set(['a', 'b', 'c']), 2).map((agent) => agent.id), ['a', 'b'])
 })
