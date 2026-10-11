@@ -113,7 +113,7 @@ export interface Building {
   roof: RoofKind
   parts: BuildingPart[]
 }
-export interface WindowPanel { x: number; y: number; z: number; rot: number; w: number; h: number }
+export interface WindowPanel { x: number; y: number; z: number; rot: number; w: number; h: number; district: DistrictId }
 export interface RoofCap { x: number; z: number; y: number; w: number; d: number; h: number }
 export interface Spire { x: number; z: number; y: number; r: number; h: number }
 
@@ -155,8 +155,45 @@ function nearestDistrict(x: number, z: number): District {
   return best
 }
 
+// --- Work spots (Lane B: every district staffs at least one ring of slots) -----
+//
+// The three original plazas stay exactly where they are (forge, planning-table,
+// signal-post). The Citadel steps, the Observatory dish terrace and the Port quay are
+// new spots placed on open ground with a clear camera corridor. Every spot holds a
+// ring of worker slots (see slotPosition in movement.ts) so several workers never
+// overlap.
+
+export interface WorkSpot {
+  district: DistrictId
+  center: [number, number]
+  slots: number
+  label: string
+}
+
+export const WORK_SPOTS: Record<DistrictId, WorkSpot> = {
+  citadel: { district: 'citadel', center: [0, 20], slots: 6, label: 'Citadel Steps' },
+  foundry: { district: 'foundry', center: [-38, -6], slots: 6, label: 'Forge Plaza' },
+  archive: { district: 'archive', center: [42, -10], slots: 6, label: 'Planning Plaza' },
+  observatory: { district: 'observatory', center: [18, 44], slots: 6, label: 'Dish Terrace' },
+  port: { district: 'port', center: [-30, 40], slots: 6, label: 'Quay' },
+  gateway: { district: 'gateway', center: [42, 18], slots: 6, label: 'Signal Court' },
+}
+
+/** Where root agents enter and historical agents leave: the portal arch. */
+export const GATEWAY_ARCH: [number, number] = [46, 12]
+
+// The three original plazas keep their generous carve; the three new spots take the
+// smallest carve (10) that still clears the ~14-unit agent-focus camera corridor.
+export const SPOT_CARVE = 10
+const SPOT_CARVES: [number, number][] = [
+  WORK_SPOTS.citadel.center,
+  WORK_SPOTS.observatory.center,
+  WORK_SPOTS.port.center,
+]
+
 function nearPlaza(x: number, z: number) {
-  return (Object.keys(PLAZAS) as StationId[]).some((id) => Math.hypot(x - PLAZAS[id][0], z - PLAZAS[id][1]) < PLAZA_CARVE)
+  if ((Object.keys(PLAZAS) as StationId[]).some((id) => Math.hypot(x - PLAZAS[id][0], z - PLAZAS[id][1]) < PLAZA_CARVE)) return true
+  return SPOT_CARVES.some(([px, pz]) => Math.hypot(x - px, z - pz) < SPOT_CARVE)
 }
 
 const rng = mulberry32(20240928)
@@ -237,7 +274,7 @@ for (let i = -6; i <= 5; i += 1) {
             else if (facade === 1) { wx = x - along; wz = z - top.d / 2 - 0.07; rot = Math.PI }
             else if (facade === 2) { wx = x + top.w / 2 + 0.07; wz = z + along; rot = Math.PI / 2 }
             else { wx = x - top.w / 2 - 0.07; wz = z - along; rot = -Math.PI / 2 }
-            WINDOWS.push({ x: wx, y, z: wz, rot, w: 0.85, h: 0.7 })
+            WINDOWS.push({ x: wx, y, z: wz, rot, w: 0.85, h: 0.7, district: district.id })
             placed += 1
           }
         }
@@ -254,7 +291,9 @@ export const UPPER_PARTS = byKind('upper')
 // --- Streets ----------------------------------------------------------------
 
 export interface RoadSegment { x: number; z: number; len: number; along: 'x' | 'z'; wide: number; lit: boolean }
-const GRID = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50]
+// Shared with the walking-worker road graph (cityGraph.ts): street intersections.
+export const STREET_GRID = [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50]
+const GRID = STREET_GRID
 
 export const ROADS: RoadSegment[] = []
 for (const g of GRID) {
@@ -345,6 +384,15 @@ export const BOAT_ROUTES: BoatRoute[] = [
 // radius 10-15, well clear of the worker at radius ~2.4, so the agent corridor stays open.
 
 export const PLAZA_PAVING: [number, number][] = (Object.keys(PLAZAS) as StationId[]).map((id) => PLAZAS[id])
+export const PLAZA_PAVING_RADIUS = 15
+// Smaller paved discs for the three new work spots (no railings/trees: the smallest
+// dressing that still reads as a public square).
+export const SPOT_PAVING: [number, number][] = [
+  WORK_SPOTS.citadel.center,
+  WORK_SPOTS.observatory.center,
+  WORK_SPOTS.port.center,
+]
+export const SPOT_PAVING_RADIUS = 10
 export const PLAZA_RAILINGS: [number, number][] = []
 export const PLAZA_TREES: [number, number][] = []
 export const PLAZA_LAMPS: [number, number][] = []

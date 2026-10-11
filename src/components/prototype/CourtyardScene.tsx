@@ -4,21 +4,24 @@ import { Suspense, useEffect, useMemo, useRef } from 'react'
 import type { ComponentRef } from 'react'
 import * as THREE from 'three'
 import { BlackHoleBackdrop } from '../BlackHoleBackdrop'
-import { CourtyardCharacter } from './CourtyardCharacter'
+import { Workers, workerTargets } from './Workers'
+import { preferredDistrict } from './agentModel'
+import type { CityAgent } from './agentModel'
 import * as city from './city'
 import type { DistrictId, StationId } from './city'
-import type { ScenarioState } from './scenario'
-import { gestureFor } from './scenario'
 
 // ---------------------------------------------------------------------------
 // Mythic City. (File name is retained from the earlier courtyard prototype; the
 // exported names are unchanged so the entry point does not churn.)
 //
-// A dense, connected harbor city built entirely from shared/instanced primitives: six
-// neighborhoods on a 10-unit lattice, a street grid, a diagonal canal and southwest
-// harbor, bridges, piers, an elevated rail loop with a moving tram, boats, street
-// couriers and steam. Three viewing scales: city / district / agent. The original
-// stylized black-hole sky is restored above the skyline.
+// A dense, connected harbor city built entirely from shared/instanced primitives:
+// six neighborhoods on a 10-unit lattice, a street grid, a diagonal canal and
+// southwest harbor, bridges, piers, an elevated rail loop with a moving tram,
+// boats, street couriers and steam. Walking workers staff every district work spot:
+// they walk the street graph when a real (or clearly labelled simulated) signal
+// changes what they are doing. Three viewing scales: city / district / agent. The
+// original stylized black-hole sky is restored above the skyline; it is decorative
+// and reads no agent state.
 // ---------------------------------------------------------------------------
 
 const FOV = 40
@@ -125,8 +128,9 @@ function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions 
     const aspect = Math.max(0.4, size.width / Math.max(1, size.height))
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect)
     const fit = (r: number, margin: number) => Math.max(r / Math.sin(vFov / 2), r / Math.sin(hFov / 2)) * margin
+    // Workers stand ~2.2x the old courtyard figure (~3.6 units tall).
     const pixelDist = (charHeight: number, charPx: number) => (charHeight * size.height) / (2 * Math.tan(vFov / 2) * charPx)
-    const needed = Math.max(fit(radius, 1.05), pixelTarget ? pixelDist(1.7, pixelTarget) : 0)
+    const needed = Math.max(fit(radius, 1.05), pixelTarget ? pixelDist(3.6, pixelTarget) : 0)
     const distance = THREE.MathUtils.clamp(needed, 5, 420)
 
     const toPos = target.clone().addScaledVector(CAMERA_DIR, distance)
@@ -552,6 +556,91 @@ function Boats({ animate }: { animate: boolean }) {
   )
 }
 
+// A one-shot boat departs the Port quay on a ship event: it sails out of the harbor,
+// fades, and a fresh boat waits docked for the next event.
+const SHIP_DOCK: [number, number] = [-54, 44]
+const SHIP_EXIT: [number, number] = [-69, 58]
+const SHIP_SAIL_SECONDS = 9
+
+function ShipBoat({ shipCount, animate }: { shipCount: number; animate: boolean }) {
+  const time = useDrivenTime(animate)
+  const group = useRef<THREE.Group>(null)
+  const mats = useRef<THREE.Material[] | null>(null)
+  const queue = useRef(0)
+  const lastSeen = useRef(shipCount)
+  const sailing = useRef(false)
+  const sailStart = useRef(0)
+
+  useEffect(() => {
+    if (shipCount > lastSeen.current) queue.current += shipCount - lastSeen.current
+    lastSeen.current = shipCount
+  }, [shipCount])
+
+  useFrame(() => {
+    const node = group.current
+    if (!node) return
+    if (!mats.current) {
+      const found: THREE.Material[] = []
+      node.traverse((obj) => {
+        const material = (obj as THREE.Mesh).material as THREE.Material | undefined
+        if (material) found.push(material)
+      })
+      for (const material of found) material.transparent = true
+      mats.current = found
+    }
+    if (!animate) {
+      // Reduced motion or pause settle: a boat waits docked, nothing sails.
+      node.visible = true
+      node.position.set(SHIP_DOCK[0], 0.3, SHIP_DOCK[1])
+      node.rotation.y = Math.PI / 2
+      for (const material of mats.current) material.opacity = 1
+      sailing.current = false
+      return
+    }
+    if (!sailing.current) {
+      if (queue.current > 0) {
+        queue.current -= 1
+        sailing.current = true
+        sailStart.current = time.current
+      } else {
+        node.visible = true
+        node.position.set(SHIP_DOCK[0], 0.3, SHIP_DOCK[1])
+        node.rotation.y = Math.PI / 2
+        for (const material of mats.current) material.opacity = 1
+        return
+      }
+    }
+    const progress = (time.current - sailStart.current) / SHIP_SAIL_SECONDS
+    if (progress >= 1) {
+      sailing.current = false
+      node.visible = false
+      return
+    }
+    node.visible = true
+    node.position.set(
+      SHIP_DOCK[0] + (SHIP_EXIT[0] - SHIP_DOCK[0]) * progress,
+      0.3,
+      SHIP_DOCK[1] + (SHIP_EXIT[1] - SHIP_DOCK[1]) * progress,
+    )
+    node.rotation.y = Math.atan2(SHIP_EXIT[0] - SHIP_DOCK[0], SHIP_EXIT[1] - SHIP_DOCK[1])
+    const fade = progress > 0.75 ? 1 - (progress - 0.75) / 0.25 : 1
+    for (const material of mats.current) material.opacity = fade
+  })
+
+  return (
+    <group ref={group} position={[SHIP_DOCK[0], 0.3, SHIP_DOCK[1]]}>
+      <mesh position={[0, 0.2, 0]} castShadow>
+        <boxGeometry args={[2.2, 0.9, 5]} />
+        <meshStandardMaterial color="#5a4a38" roughness={0.85} />
+      </mesh>
+      <mesh position={[0, 0.95, -0.7]}>
+        <boxGeometry args={[1.4, 1, 2]} />
+        <meshStandardMaterial color="#33465a" emissive="#ffbf6a" emissiveIntensity={0.5} roughness={0.6} />
+      </mesh>
+    </group>
+  )
+}
+
 function Couriers({ animate }: { animate: boolean }) {
   const time = useDrivenTime(animate)
   const mesh = useRef<THREE.InstancedMesh>(null)
@@ -634,13 +723,19 @@ function Lamps() {
 }
 
 // Low landscaping dresses each work plaza as a public square. Props sit at radius 10-15,
-// well clear of the worker, so the agent camera corridor stays open.
+// well clear of the worker, so the agent corridor stays open.
 function Plazas() {
   return (
     <group>
       {city.PLAZA_PAVING.map(([x, z], index) => (
-        <mesh key={index} position={[x, city.WALK_Y - 0.07, z]} receiveShadow>
-          <cylinderGeometry args={[15, 15, 0.14, 32]} />
+        <mesh key={`p${index}`} position={[x, city.WALK_Y - 0.07, z]} receiveShadow>
+          <cylinderGeometry args={[city.PLAZA_PAVING_RADIUS, city.PLAZA_PAVING_RADIUS, 0.14, 32]} />
+          <meshStandardMaterial color="#3a4149" roughness={0.98} />
+        </mesh>
+      ))}
+      {city.SPOT_PAVING.map(([x, z], index) => (
+        <mesh key={`s${index}`} position={[x, city.WALK_Y - 0.07, z]} receiveShadow>
+          <cylinderGeometry args={[city.SPOT_PAVING_RADIUS, city.SPOT_PAVING_RADIUS, 0.14, 28]} />
           <meshStandardMaterial color="#3a4149" roughness={0.98} />
         </mesh>
       ))}
@@ -675,15 +770,43 @@ function Plazas() {
 
 // --- Buildings ---------------------------------------------------------------
 
-function Windows() {
+// District window glow follows the count of fresh active workers there, eased over
+// about 1.5 s. Windows are grouped per district so each neighborhood glows on its
+// own; the easing freezes while paused.
+function DistrictWindows({ counts, frozen }: { counts: Record<DistrictId, number>; frozen: boolean }) {
+  const mats = useRef<Array<THREE.MeshStandardMaterial | null>>([])
+  const current = useRef<number[]>([0.4, 0.4, 0.4, 0.4, 0.4, 0.4])
+  const perDistrict = useMemo(
+    () => city.DISTRICTS.map((district) => city.WINDOWS.filter((panel) => panel.district === district.id)),
+    [],
+  )
+  useFrame((_, delta) => {
+    if (frozen) return
+    city.DISTRICTS.forEach((district, index) => {
+      const target = 0.35 + 0.3 * Math.min(3, counts[district.id] ?? 0)
+      current.current[index] += (target - current.current[index]) * Math.min(1, delta / 1.5)
+      const material = mats.current[index]
+      if (material) material.emissiveIntensity = current.current[index]
+    })
+  })
   return (
-    <Instances limit={city.WINDOWS.length}>
-      <boxGeometry args={[1, 1, 0.16]} />
-      <meshStandardMaterial color="#ffd9a0" emissive="#ffcf8a" emissiveIntensity={0.4} roughness={0.6} />
-      {city.WINDOWS.map((panel, index) => (
-        <Instance key={index} position={[panel.x, panel.y, panel.z]} rotation={[0, panel.rot, 0]} scale={[panel.w, panel.h, 1]} />
+    <group>
+      {perDistrict.map((panels, index) => panels.length === 0 ? null : (
+        <Instances key={city.DISTRICTS[index].id} limit={panels.length}>
+          <boxGeometry args={[1, 1, 0.16]} />
+          <meshStandardMaterial
+            ref={(node) => { mats.current[index] = node }}
+            color="#ffd9a0"
+            emissive="#ffcf8a"
+            emissiveIntensity={0.4}
+            roughness={0.6}
+          />
+          {panels.map((panel, k) => (
+            <Instance key={k} position={[panel.x, panel.y, panel.z]} rotation={[0, panel.rot, 0]} scale={[panel.w, panel.h, 1]} />
+          ))}
+        </Instances>
       ))}
-    </Instances>
+    </group>
   )
 }
 
@@ -718,12 +841,11 @@ function Buildings() {
           <Instance key={index} position={[spire.x, spire.y + spire.h / 2, spire.z]} scale={[spire.r, spire.h, spire.r]} />
         ))}
       </Instances>
-      <Windows />
     </group>
   )
 }
 
-// --- Work stations (retained from the courtyard slice) -----------------------
+// --- Work stations and new work-spot dressing ---------------------------------
 
 const FIREWOOD = Array.from({ length: 12 }, (_, i) => {
   const row = Math.floor(i / 4)
@@ -863,7 +985,7 @@ function PlanningTable({ reducedMotion, paused }: { reducedMotion: boolean; paus
         </mesh>
         <mesh position={[0, 0.24, 0]}>
           <sphereGeometry args={[0.05, 8, 6]} />
-          <meshStandardMaterial color="#ffcf7a" emissive="#ffbf5c" emissiveIntensity={0.9} roughness={0.5} />
+          <meshStandardMaterial color="#ffcf7a" emissive="#ffcf5c" emissiveIntensity={0.9} roughness={0.5} />
         </mesh>
       </group>
       <pointLight position={[-1.1, 1.35, -0.45]} color="#ffb85c" intensity={4} distance={6} decay={2} />
@@ -942,12 +1064,82 @@ function Station({ id, position, facing, reducedMotion, paused }: { id: StationI
   )
 }
 
+// Smallest dressing that reads as a work spot: the Citadel steps (needs-input waits
+// face the core from here), a terrace telescope, and quay crates with a mooring post.
+function CitadelSteps() {
+  const [x, z] = city.WORK_SPOTS.citadel.center
+  return (
+    <group position={[x, 0, z]}>
+      {[0, 1, 2, 3].map((step) => (
+        <mesh key={step} position={[0, 0.25 + step * 0.5, 2.6 - step * 1.7]} receiveShadow>
+          <boxGeometry args={[9 - step * 1.2, 0.5, 1.8]} />
+          <meshStandardMaterial color="#3d4654" roughness={0.95} />
+        </mesh>
+      ))}
+      {[[-4.6, 0], [4.6, 0]].map(([bx, bz]) => (
+        <group key={`${bx}`} position={[bx, 0, bz]}>
+          <mesh position={[0, 2.2, 0]} castShadow>
+            <cylinderGeometry args={[0.09, 0.12, 4.4, 6]} />
+            <meshStandardMaterial color="#5a4228" roughness={0.95} />
+          </mesh>
+          <mesh position={[0, 3.4, 0]}>
+            <boxGeometry args={[0.7, 1.0, 0.05]} />
+            <meshStandardMaterial color="#d9b05a" emissive="#d9b05a" emissiveIntensity={0.35} roughness={0.85} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+function TerraceScope() {
+  const [x, z] = city.WORK_SPOTS.observatory.center
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[2.8, 0.5, -2.4]} castShadow receiveShadow>
+        <boxGeometry args={[1.6, 1.0, 0.9]} />
+        <meshStandardMaterial color="#3a4149" roughness={0.9} />
+      </mesh>
+      <group position={[-2.6, 0, 2.2]} rotation={[0, 0.7, 0]}>
+        {[[-0.5, 0.35], [0.5, 0.35], [0, -0.55]].map(([lx, lz], index) => (
+          <mesh key={index} position={[lx, 0.6, lz]} rotation={[lz > 0 ? -0.4 : 0.4, 0, lx > 0 ? 0.4 : -0.4]} castShadow>
+            <cylinderGeometry args={[0.06, 0.06, 1.5, 6]} />
+            <meshStandardMaterial color="#4a4f56" roughness={0.6} metalness={0.4} />
+          </mesh>
+        ))}
+        <mesh position={[0, 1.5, 0]} rotation={[-0.6, 0, 0]} castShadow>
+          <cylinderGeometry args={[0.16, 0.22, 1.4, 10]} />
+          <meshStandardMaterial color="#59626c" roughness={0.5} metalness={0.4} />
+        </mesh>
+      </group>
+    </group>
+  )
+}
+
+function QuayProps() {
+  const [x, z] = city.WORK_SPOTS.port.center
+  return (
+    <group position={[x, 0, z]}>
+      {[[-3.2, -2.2, 0.9], [-2.2, -2.6, 0.7], [-2.7, -1.7, 0.7]].map(([cx, cz, s], index) => (
+        <mesh key={index} position={[cx, s / 2, cz]} rotation={[0, index * 0.4, 0]} castShadow receiveShadow>
+          <boxGeometry args={[s, s, s]} />
+          <meshStandardMaterial color="#6b4f33" roughness={0.9} />
+        </mesh>
+      ))}
+      <mesh position={[3.4, 0.8, 2.6]} castShadow>
+        <cylinderGeometry args={[0.14, 0.18, 1.6, 8]} />
+        <meshStandardMaterial color="#4a3524" roughness={0.95} />
+      </mesh>
+    </group>
+  )
+}
+
 // --- Labels ------------------------------------------------------------------
 
 function DistrictLabel({ district, count, onDistrict }: { district: city.District; count: number; onDistrict: (id: DistrictId) => void }) {
   const y = district.radius * 1.05 + 10
   return (
-    <Html position={[district.center[0], y, district.center[1]]} center zIndexRange={[16, 0]}>
+    <Html position={[district.center[0], y, district.center[1]]} center zIndexRange={[1, 0]}>
       <button type="button" className="proto-district-label" onClick={(event) => { event.stopPropagation(); onDistrict(district.id) }}>
         <span>{district.name}</span>
         <small>{count === 0 ? 'No workers assigned' : `${count} ${count === 1 ? 'worker' : 'workers'}`}</small>
@@ -958,30 +1150,12 @@ function DistrictLabel({ district, count, onDistrict }: { district: city.Distric
 
 // --- World ------------------------------------------------------------------
 
-// Station plazas and each worker's spot within them. Workers stand just to the camera
-// side of their station, turned 3/4 toward the viewer so faces read at agent scale.
 const STATION_FACING = 0.5
-const AGENT_SLOT: Record<string, { station: StationId; slot: number }> = {
-  bjorn: { station: 'forge', slot: 0 },
-  eirik: { station: 'forge', slot: 1 },
-  sigrid: { station: 'planning-table', slot: 0 },
-  halvard: { station: 'planning-table', slot: 1 },
-  astrid: { station: 'signal-post', slot: 0 },
-}
 
-function placementFor(station: StationId, slot: number): [number, number, number] {
-  const [px, pz] = city.PLAZAS[station]
-  const forward = 1.5
-  const lateral = station === 'signal-post' ? 1.7 : slot === 0 ? -1.9 : 1.9
-  return [
-    px + Math.sin(STATION_FACING) * forward + Math.cos(STATION_FACING) * lateral,
-    city.WALK_Y,
-    pz + Math.cos(STATION_FACING) * forward - Math.sin(STATION_FACING) * lateral,
-  ]
-}
-
-function CourtyardWorld({ state, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, onSelect, onDistrict, onReady }: {
-  state: ScenarioState
+function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, onSelect, onDistrict, onReady }: {
+  agents: CityAgent[]
+  celebrationBy: Record<string, number>
+  shipCount: number
   selectedId?: string
   view: city.View
   focusRevision: number
@@ -995,29 +1169,34 @@ function CourtyardWorld({ state, selectedId, view, focusRevision, paused, reduce
 }) {
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null)
 
-  const latestCelebration = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const celebration of state.celebrations) map.set(celebration.agentId, celebration.id)
-    return map
-  }, [state.celebrations])
-
   const districtCounts = useMemo(() => {
     const map = new Map<DistrictId, number>()
-    for (const agent of state.agents) {
-      const id = city.districtForStation(agent.station)
+    for (const agent of agents) {
+      if (agent.freshness === 'historical') continue
+      const id = preferredDistrict(agent)
       map.set(id, (map.get(id) ?? 0) + 1)
     }
     return map
-  }, [state.agents])
+  }, [agents])
+
+  const glowCounts = useMemo(() => {
+    const counts: Record<DistrictId, number> = {
+      citadel: 0, foundry: 0, archive: 0, observatory: 0, port: 0, gateway: 0,
+    }
+    for (const agent of agents) {
+      if (agent.freshness !== 'fresh' || agent.workState !== 'active') continue
+      counts[preferredDistrict(agent)] += 1
+    }
+    return counts
+  }, [agents])
 
   const agentPositions = useMemo(() => {
     const map: Record<string, [number, number, number]> = {}
-    for (const id of Object.keys(AGENT_SLOT)) {
-      const slot = AGENT_SLOT[id]
-      map[id] = placementFor(slot.station, slot.slot)
+    for (const [id, target] of workerTargets(agents)) {
+      map[id] = [target.x, city.WALK_Y, target.z]
     }
     return map
-  }, [])
+  }, [agents])
 
   useEffect(() => {
     onReady()
@@ -1059,6 +1238,7 @@ function CourtyardWorld({ state, selectedId, view, focusRevision, paused, reduce
       <Plazas />
       <Waterworks />
       <Buildings />
+      <DistrictWindows counts={glowCounts} frozen={paused} />
       <Lamps />
 
       <Citadel />
@@ -1069,35 +1249,29 @@ function CourtyardWorld({ state, selectedId, view, focusRevision, paused, reduce
 
       <Rail animate={animate} />
       <Boats animate={animate} />
+      <ShipBoat shipCount={shipCount} animate={animate} />
       <Couriers animate={animate} />
       <Steam animate={animate} />
 
       {(['forge', 'planning-table', 'signal-post'] as StationId[]).map((id) => (
         <Station key={id} id={id} position={stationPosition(id)} facing={STATION_FACING} reducedMotion={reducedMotion} paused={paused} />
       ))}
+      <CitadelSteps />
+      <TerraceScope />
+      <QuayProps />
 
       {view.scale === 'city' && city.DISTRICTS.map((district) => (
         <DistrictLabel key={district.id} district={district} count={districtCounts.get(district.id) ?? 0} onDistrict={onDistrict} />
       ))}
 
-      {state.agents.map((agent, index) => {
-        const position = agentPositions[agent.id]
-        if (!position) return null
-        return (
-          <group key={agent.id} position={position} rotation={[0, STATION_FACING, 0]} scale={0.85}>
-            <CourtyardCharacter
-              agent={agent}
-              gesture={gestureFor(agent)}
-              index={index}
-              celebrationId={latestCelebration.get(agent.id)}
-              paused={paused}
-              reducedMotion={reducedMotion}
-              selected={selectedId === agent.id}
-              onSelect={onSelect}
-            />
-          </group>
-        )
-      })}
+      <Workers
+        agents={agents}
+        selectedId={selectedId}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        celebrationBy={celebrationBy}
+        onSelect={onSelect}
+      />
 
       <CameraRig view={view} revision={focusRevision} reducedMotion={reducedMotion} controlsRef={controlsRef} agentPositions={agentPositions} />
       <OrbitControls
@@ -1116,7 +1290,9 @@ function CourtyardWorld({ state, selectedId, view, focusRevision, paused, reduce
 }
 
 export interface CourtyardSceneProps {
-  state: ScenarioState
+  agents: CityAgent[]
+  celebrationBy: Record<string, number>
+  shipCount: number
   selectedId?: string
   view: city.View
   focusRevision: number
