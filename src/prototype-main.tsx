@@ -10,12 +10,13 @@ import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
 import { nextAttentionCity, toCitySnapshot } from './components/prototype/scenarioBridge'
+import { useCityFeed } from './hooks/useCityFeed'
 import './components/prototype/prototype.css'
 
-// Standalone synthetic prototype: the Mythic City. No telemetry hook and no fetch; the
-// scenario is the only source of truth, bridged into CityAgent snapshots, and is
-// clearly labelled a simulation. The original app (index.html / src/main.tsx) is
-// untouched. Live feed wiring arrives with Lane A; the source switch stays inert.
+// Mythic City prototype: the simulation scenario and the live city feed are two
+// producers of CityAgent snapshots. The scene, HUD and roster only ever read the
+// active producer's agents and never mix them. The original app (index.html /
+// src/main.tsx) is untouched.
 
 function supportsWebGL(): boolean {
   try {
@@ -55,6 +56,7 @@ function PrototypeApp() {
   const [focusRevision, setFocusRevision] = useState(0)
   const [ready, setReady] = useState(false)
   const [source, setSource] = useState<'live' | 'simulation'>('simulation')
+  const [hasChosenSource, setHasChosenSource] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   )
@@ -62,11 +64,29 @@ function PrototypeApp() {
   const debug = useMemo(() => readDebugFlag(), [])
   const statsSink = useRef<RenderStats>({ calls: 0, triangles: 0, frameMs: 0, width: 0, height: 0, pixelRatio: 1 })
 
-  // The scenario is the only producer until Lane A merges. Memoized on the scenario
-  // so selection and camera moves never rebuild worker identity.
-  const snapshot = useMemo(() => toCitySnapshot(state, Date.now()), [state])
-  const agents = snapshot.agents
+  const feed = useCityFeed()
+  const liveSnapshot = feed.snapshot
+  const liveReady = feed.status === 'live' && liveSnapshot !== null
+  const hasLiveSnapshot = liveSnapshot !== null
+  // Live is the default once the feed reports live with a snapshot. Losing the
+  // feed keeps the last snapshot (it ages by wall-clock time in the hook) and
+  // never silently switches back to simulation.
+  useEffect(() => {
+    if (!hasChosenSource && liveReady) setSource('live')
+  }, [hasChosenSource, liveReady])
+  const isLive = source === 'live' && hasLiveSnapshot
+  const livePaused = isLive && feed.status !== 'live'
+
+  // The active producer's snapshot. Simulation is memoized on scenario steps so
+  // selection and camera moves never rebuild worker identity; live snapshots
+  // arrive from the feed hook. Never mix the two.
+  const simSnapshot = useMemo(() => toCitySnapshot(state, Date.now()), [state])
+  const agents = isLive && liveSnapshot ? liveSnapshot.agents : simSnapshot.agents
+  const lastEvent = isLive && liveSnapshot
+    ? `Live feed · ${liveSnapshot.agents.length} ${liveSnapshot.agents.length === 1 ? 'agent' : 'agents'} · snapshot ${new Date(liveSnapshot.generatedAt).toLocaleTimeString()}`
+    : state.lastEvent
   const celebrationBy = useMemo(() => {
+    if (isLive) return {}
     const map: Record<string, number> = {}
     const byNative = new Map(state.agents.map((agent) => [agent.id, agent]))
     for (const celebration of state.celebrations) {
@@ -74,7 +94,8 @@ function PrototypeApp() {
       if (agent) map[`${agent.provider}:${agent.id}`] = celebration.id
     }
     return map
-  }, [state])
+  }, [state, isLive])
+  const shipCount = isLive ? 0 : state.ships.length
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -89,11 +110,12 @@ function PrototypeApp() {
   }, [])
 
   // One dwell timer per committed step (not a per-frame React state update).
+  // The simulation timeline does not advance while live agents are shown.
   useEffect(() => {
-    if (!playing || isFinished(state)) return
+    if (isLive || !playing || isFinished(state)) return
     const id = window.setTimeout(() => setState((current) => advanceScenario(current)), DWELL_MS)
     return () => window.clearTimeout(id)
-  }, [playing, state])
+  }, [playing, state, isLive])
 
   const goCity = useCallback(() => {
     setSelectedId(undefined)
@@ -140,6 +162,14 @@ function PrototypeApp() {
 
   const step = useCallback(() => setState((current) => advanceScenario(current)), [])
 
+  const handleSource = useCallback((next: 'live' | 'simulation') => {
+    setHasChosenSource(true)
+    setSource(next)
+    setSelectedId(undefined)
+    setView({ scale: 'city' })
+    setFocusRevision((value) => value + 1)
+  }, [])
+
   const needsYou = useCallback(() => {
     const next = nextAttentionCity(agents, selectedId)
     if (next) selectAgent(next)
@@ -170,7 +200,7 @@ function PrototypeApp() {
           <CourtyardScene
             agents={agents}
             celebrationBy={celebrationBy}
-            shipCount={state.ships.length}
+            shipCount={shipCount}
             selectedId={selectedId}
             view={view}
             focusRevision={focusRevision}
@@ -191,12 +221,16 @@ function PrototypeApp() {
       )}
       <CourtyardHud
         agents={agents}
-        lastEvent={state.lastEvent}
+        lastEvent={lastEvent}
         playing={playing}
-        finished={isFinished(state)}
+        finished={isLive ? true : isFinished(state)}
         view={view}
         selectedId={selectedId}
-        source={source}
+        source={isLive ? 'live' : 'simulation'}
+        isLive={isLive}
+        feedStatus={feed.status}
+        liveAvailable={liveReady}
+        livePaused={livePaused}
         showStats={debug}
         statsSink={statsSink}
         onCity={goCity}
@@ -206,7 +240,7 @@ function PrototypeApp() {
         onReplay={replay}
         onStep={step}
         onNeedsYou={needsYou}
-        onSource={setSource}
+        onSource={handleSource}
       />
       {webgl && !ready && <div className="proto-loading" role="status">Preparing the city…</div>}
     </main>

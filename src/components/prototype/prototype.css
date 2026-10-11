@@ -93,6 +93,16 @@
 .proto-kicker { color: var(--proto-gold); font-size: 10px; font-weight: 600; letter-spacing: .3em; text-transform: uppercase; }
 .proto-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
 .proto-disclosure { margin: 0; color: var(--proto-muted); font-size: 11px; line-height: 1.4; }
+.proto-live-paused {
+  margin: 0;
+  padding: 6px 11px;
+  color: var(--proto-gold);
+  background: rgba(217, 176, 90, .08);
+  border: 1px solid rgba(217, 176, 90, .45);
+  border-radius: 16px;
+  font-size: 11px;
+  line-height: 1.35;
+}
 
 .proto-source-switch {
   display: inline-flex;
@@ -409,6 +419,7 @@
   }
   .proto-topbar h1 { font-size: 17px; }
   .proto-disclosure { font-size: 10px; }
+  .proto-live-paused { font-size: 10px; }
   .proto-counts { padding: 7px 9px; gap: 10px; }
   .proto-counts strong { font-size: 15px; }
   .proto-needs { padding: 5px 8px; font-size: 10px; }
