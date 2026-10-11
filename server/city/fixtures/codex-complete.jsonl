@@ -1,0 +1,4 @@
+{"type":"session_meta","id":"codex-demo-3","cwd":"/work/city-demo","originator":"user","source":"cli"}
+{"type":"event_msg","payload":{"type":"task_started"}}
+{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange"}}}
+{"type":"event_msg","payload":{"type":"task_complete"}}

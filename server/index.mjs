@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { readCodex } from './adapters/codex.mjs'
 import { readClaudeCode } from './adapters/claude.mjs'
 import { readOpenCode, streamOpenCodeEvents } from './adapters/opencode.mjs'
+import { buildCitySnapshot } from './city/snapshot.mjs'
 import { classifyFailure } from './safety.mjs'
 
 try { process.loadEnvFile?.() } catch (error) {
@@ -88,12 +89,77 @@ function snapshot() {
   return promise
 }
 
+// City snapshots reuse the file mtime/size caches inside server/city/*, so a
+// 2 s stream poll only re-parses changed files. CLI-backed reads (OpenCode,
+// Codex titles) carry their own TTL caches.
+let inFlightCity = null
+function citySnapshot() {
+  if (inFlightCity) return inFlightCity
+  const promise = buildCitySnapshot()
+  inFlightCity = promise
+  const release = () => { if (inFlightCity === promise) inFlightCity = null }
+  promise.then(release, release)
+  return promise
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${host}:${port}`)
   if (request.method === 'GET' && url.pathname === '/api/health') return json(response, 200, { ok: true, readOnly: true })
   if (request.method === 'GET' && url.pathname === '/api/telemetry') {
     try { return json(response, 200, await snapshot()) }
     catch { return json(response, 500, { mode: 'error', records: [], message: 'Telemetry read failed.' }) }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/city') {
+    try { return json(response, 200, await citySnapshot()) }
+    catch { return json(response, 500, { source: 'live', generatedAt: Date.now(), agents: [], diagnostics: [] }) }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/city/stream') {
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-store',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    })
+    response.write('event: ready\ndata: {}\n\n')
+    const controller = new AbortController()
+    const abort = () => controller.abort()
+    response.on('close', abort)
+    if (response.destroyed || response.writableEnded) controller.abort()
+    const canWrite = () => !controller.signal.aborted && !response.destroyed && !response.writableEnded
+    let lastSent = ''
+    const sendSnapshot = async () => {
+      if (!canWrite()) return
+      try {
+        const current = await citySnapshot()
+        const text = JSON.stringify(current)
+        if (text !== lastSent && canWrite()) {
+          lastSent = text
+          response.write(`event: snapshot\ndata: ${text}\n\n`)
+        }
+      } catch {
+        // Keep polling; the client retains its last snapshot.
+      }
+    }
+    try {
+      await sendSnapshot()
+      while (!controller.signal.aborted) {
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            controller.signal.removeEventListener('abort', onAbort)
+            resolve()
+          }, 2000)
+          const onAbort = () => { clearTimeout(timeout); resolve() }
+          controller.signal.addEventListener('abort', onAbort, { once: true })
+        })
+        if (controller.signal.aborted) break
+        await sendSnapshot()
+      }
+    } catch {
+      // Connection teardown below; never forward raw errors.
+    }
+    response.off('close', abort)
+    if (canWrite()) response.end()
+    return
   }
   if (request.method === 'GET' && url.pathname === '/api/events') {
     response.writeHead(200, {

@@ -1,0 +1,2 @@
+{"type":"session_meta","id":"codex-demo-4","cwd":"/work/city-demo","originator":"user","source":"cli","parentId":"codex-demo-1"}
+{"type":"event_msg","payload":{"type":"item_started","item":{"type":"CommandExecution","command":"git commit -m demo"}}}

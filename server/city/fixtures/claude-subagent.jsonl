@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"claude-demo-1/agent-1","cwd":"/work/city-demo","timestamp":"2026-01-01T00:01:00.000Z","message":{"role":"user","content":[{"type":"text","text":"synthetic subagent prompt (never forwarded)"}]}}
+{"type":"assistant","sessionId":"claude-demo-1/agent-1","cwd":"/work/city-demo","timestamp":"2026-01-01T00:01:10.000Z","message":{"model":"demo-model","content":[{"type":"tool_use","id":"tool-9","name":"Grep","input":{"pattern":"synthetic"}}]}}
