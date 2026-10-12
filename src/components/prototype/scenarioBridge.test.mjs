@@ -82,20 +82,39 @@ test('ship steps log one boat each and never replay', () => {
 test('counts and status copy keep work state and freshness apart', () => {
   const agents = toCityAgents(createScenario(), NOW)
   const counts = cityCounts(agents)
-  assert.deepEqual(counts, { working: 2, needsYou: 1, complete: 1, total: 5 })
+  assert.equal(counts.working, 2)
+  assert.equal(counts.needsYou, 1)
+  assert.equal(counts.complete, 1)
+  assert.equal(counts.total, 5)
+  // Per-district split: labels count assigned (all non-historical), glow counts active.
+  assert.deepEqual(counts.byDistrict.foundry, { assigned: 1, active: 1 })
+  assert.deepEqual(counts.byDistrict.citadel, { assigned: 2, active: 0 })
+  assert.deepEqual(counts.byDistrict.archive, { assigned: 2, active: 1 })
   assert.equal(cityStatusLabel(agents.find((a) => a.workState === 'unknown')), 'Unknown · no heartbeat')
   assert.equal(cityStatusLabel({ workState: 'active', freshness: 'stale' }), 'Stale snapshot · last active')
   assert.equal(cityStatusLabel({ workState: 'active', freshness: 'historical' }), 'Past · walked out the gate')
   assert.equal(cityStatusLabel({ workState: 'needs-input', freshness: 'fresh' }), 'Needs you')
 })
 
-test('city attention cycles in stable snapshot order and wraps', () => {
+test('city attention cycles in urgency order and wraps', () => {
   const agents = toCityAgents(createScenario(), NOW)
   const queue = cityAttentionQueue(agents)
   assert.equal(queue.length, 1)
   assert.equal(nextAttentionCity(agents), queue[0].id)
   assert.equal(nextAttentionCity(agents, queue[0].id), queue[0].id)
   assert.equal(nextAttentionCity([]), undefined)
+})
+
+test('city attention queue sorts longest wait first', () => {
+  const agents = toCityAgents(createScenario(), NOW)
+  const base = agents[0]
+  const oldest = { ...base, id: 'codex:oldest', workState: 'needs-input', freshness: 'fresh', lastSignalAt: NOW - 60_000 }
+  const newest = { ...base, id: 'codex:newest', workState: 'needs-input', freshness: 'fresh', lastSignalAt: NOW - 5_000 }
+  const queue = cityAttentionQueue([newest, oldest])
+  assert.deepEqual(queue.map((agent) => agent.id), ['codex:oldest', 'codex:newest'])
+  assert.equal(nextAttentionCity([newest, oldest]), 'codex:oldest')
+  assert.equal(nextAttentionCity([newest, oldest], 'codex:oldest'), 'codex:newest')
+  assert.equal(nextAttentionCity([newest, oldest], 'codex:newest'), 'codex:oldest')
 })
 
 test('snapshots carry the simulation source and no diagnostics', () => {

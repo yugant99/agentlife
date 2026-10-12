@@ -1,8 +1,8 @@
 import {
   Anchor, Archive, ArrowCounterClockwise, ArrowLeft, ArrowRight, Buildings, CaretDown, CheckCircle, CloudSlash,
-  Flag, FlagBanner, Gauge, Hammer, HardHat, Hourglass, List, MapTrifold, Pause, Play, WarningCircle, X,
+  Flag, FlagBanner, Gauge, Hammer, HardHat, Hourglass, List, MapTrifold, Pause, Play, Question, WarningCircle, X,
 } from '@phosphor-icons/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { preferredDistrict } from './agentModel'
 import type { CityAgent } from './agentModel'
@@ -10,12 +10,14 @@ import type { CityFeedStatus } from '../../hooks/useCityFeed'
 import * as city from './city'
 import type { DistrictId } from './city'
 import type { RenderStats } from './CourtyardScene'
-import { cityCounts, cityStatusLabel } from './scenarioBridge'
+import { DATAMAP_ROWS, cityCounts, formatAge, overflowLabel, truthCard, urgencySort } from './datamap'
+import { cityAttentionQueue, cityStatusLabel } from './scenarioBridge'
 import { PROVIDER_LABEL } from './scenario'
 
 // Thin dark command shell over a full-bleed canvas. It owns no scene state: counts,
 // district navigator, roster and inspector all read the same CityAgent snapshot.
-// Scene (3D) labels render below every HUD layer; the HUD carries z-index for that.
+// The mapping table in datamap.ts is the single truth contract; the legend below
+// renders directly from it. Scene (3D) labels render below every HUD layer.
 
 const DISTRICT_ICON: Record<DistrictId, typeof Hammer> = {
   citadel: Buildings,
@@ -25,6 +27,8 @@ const DISTRICT_ICON: Record<DistrictId, typeof Hammer> = {
   port: Anchor,
   gateway: FlagBanner,
 }
+
+const MAX_DISTRICT_CHIPS = 6
 
 function statusIcon(agent: CityAgent) {
   if (agent.workState === 'unknown') return CloudSlash
@@ -46,18 +50,36 @@ function statusKey(agent: CityAgent) {
   return agent.workState
 }
 
-function assignmentLabel(agent: CityAgent): string {
-  const district = city.districtById(preferredDistrict(agent))
-  const tool = agent.toolKind ?? 'no tool yet'
-  return `${agent.phase} · ${tool} → ${district.name}`
-}
-
-function formatSignalAge(ageMs: number): string {
-  if (!Number.isFinite(ageMs) || ageMs < 0) return 'unknown age'
-  if (ageMs < 5_000) return 'just now'
-  if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s ago`
-  if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m ago`
-  return `${Math.floor(ageMs / 3_600_000)}h ago`
+function Legend() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="proto-legend">
+      <button
+        type="button"
+        className="proto-legend-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Question size={13} weight="bold" /> How to read
+      </button>
+      {open && (
+        <div className="proto-legend-pop" role="dialog" aria-label="How to read the city">
+          <p>District labels show assigned workers while window glow shows active ones.</p>
+          <p>A worker walks 4-10 s after its state changes — the HUD flips first, the figure arrives later.</p>
+          <dl>
+            {DATAMAP_ROWS.map((row) => (
+              <div key={row.channel}>
+                <dt>{row.channel}</dt>
+                <dd>{row.rule} <span>Degrades: {row.degrades}</span></dd>
+              </div>
+            ))}
+          </dl>
+          <p className="proto-legend-foot">Glow = N active (fresh). The amber beam is ground truth for needs-you.</p>
+          <button type="button" className="proto-legend-close" onClick={() => setOpen(false)}>Close</button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
@@ -72,6 +94,7 @@ function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
   const district = city.districtById(preferredDistrict(agent))
   const DistrictIcon = DISTRICT_ICON[district.id]
   const roleLabel = agent.role?.trim() ? agent.role.trim() : undefined
+  const card = truthCard(agent)
   return (
     <section className="proto-inspector" aria-live="polite">
       <div className="proto-inspector-head">
@@ -83,16 +106,25 @@ function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
       <p className="proto-inspector-role">
         {roleLabel ? `${roleLabel} · ` : ''}{agent.depth > 0 ? `Sub-agent (depth ${agent.depth})` : 'Worker'} · {agent.workspace}
       </p>
-      <dl className="proto-inspector-grid">
-        <div><dt>Status</dt><dd className={`proto-status-text proto-status-text--${statusKey(agent)}`}><Icon size={13} weight="bold" />{cityStatusLabel(agent)}</dd></div>
-        <div><dt>Assignment</dt><dd>{assignmentLabel(agent)}</dd></div>
-        <div><dt>Source</dt><dd className="proto-source">{source === 'live' ? 'Live' : 'Simulation · today'}</dd></div>
-        <div><dt>{source === 'live' ? 'Provider' : 'Example provider'}</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
-        <div><dt>Workspace</dt><dd>{agent.workspace}</dd></div>
-        <div><dt>Phase</dt><dd>{agent.phase}</dd></div>
-        <div><dt>Tool</dt><dd>{agent.toolKind ?? 'no tool yet'}</dd></div>
-        <div><dt>Freshness</dt><dd>{agent.freshness} · {formatSignalAge(Date.now() - agent.lastSignalAt)}</dd></div>
+      <dl className="proto-truthcard">
+        <div><dt>Doing</dt><dd>{card.doing}</dd></div>
+        <div><dt>Where + why</dt><dd>{card.where}</dd></div>
+        <div><dt>Since</dt><dd>{card.since}</dd></div>
+        <div><dt>Next</dt><dd>{card.next}</dd></div>
       </dl>
+      <p className="proto-inspector-status"><Icon size={13} weight="bold" />{cityStatusLabel(agent)}</p>
+      <details className="proto-raw">
+        <summary>Raw fields</summary>
+        <dl>
+          <div><dt>Status</dt><dd>{agent.workState}</dd></div>
+          <div><dt>Phase</dt><dd>{agent.phase}</dd></div>
+          <div><dt>Tool</dt><dd>{agent.toolKind ?? 'no tool yet'}</dd></div>
+          <div><dt>Freshness</dt><dd>{agent.freshness} · {formatAge(Date.now() - agent.lastSignalAt)}</dd></div>
+          <div><dt>{source === 'live' ? 'Provider' : 'Example provider'}</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
+          <div><dt>Workspace</dt><dd>{agent.workspace}</dd></div>
+          {agent.model ? <div><dt>Model</dt><dd>{agent.model}</dd></div> : null}
+        </dl>
+      </details>
       <p className="proto-inspector-event"><span>{eventLabel}</span>{event}</p>
       <div className="proto-inspector-actions">
         <button type="button" className="proto-inspector-back" onClick={onBack}><ArrowLeft size={13} weight="bold" /> District</button>
@@ -135,8 +167,9 @@ function RosterRow({ agent, selected, onSelect, buttonRef, onKeyDown }: {
 function Roster({ agents, selectedId, onSelect }: { agents: CityAgent[]; selectedId?: string; onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false)
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
-  const active = agents.filter((agent) => agent.freshness !== 'historical')
-  const past = agents.filter((agent) => agent.freshness === 'historical')
+  const sorted = useMemo(() => urgencySort(agents), [agents])
+  const active = sorted.filter((agent) => agent.freshness !== 'historical')
+  const past = sorted.filter((agent) => agent.freshness === 'historical')
   const rows = [...active, ...past]
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLElement>, index: number) {
@@ -161,7 +194,7 @@ function Roster({ agents, selectedId, onSelect }: { agents: CityAgent[]; selecte
         <CaretDown size={13} weight="bold" className="proto-roster-caret" />
       </button>
       {open && (
-        <div className="proto-roster-list" role="group" aria-label="Agent roster">
+        <div className="proto-roster-list" role="group" aria-label="Agent roster, urgency-sorted">
           {active.map((agent) => {
             const index = rows.indexOf(agent)
             return (
@@ -237,6 +270,8 @@ function DistrictBar({ district, workers, selectedId, onCity, onSelect }: {
   onCity: () => void
   onSelect: (id: string) => void
 }) {
+  const shown = workers.slice(0, MAX_DISTRICT_CHIPS)
+  const overflow = workers.length > shown.length ? overflowLabel(shown.length, workers.length) : null
   return (
     <div className="proto-districtbar">
       <div className="proto-districtbar-head">
@@ -248,7 +283,7 @@ function DistrictBar({ district, workers, selectedId, onCity, onSelect }: {
         <p className="proto-districtbar-empty">No workers assigned</p>
       ) : (
         <div className="proto-districtbar-workers">
-          {workers.map((agent) => (
+          {shown.map((agent) => (
             <button
               key={agent.id}
               type="button"
@@ -258,6 +293,7 @@ function DistrictBar({ district, workers, selectedId, onCity, onSelect }: {
               {agent.name} · {cityStatusLabel(agent)}
             </button>
           ))}
+          {overflow && <span className="proto-overflow">{overflow}</span>}
         </div>
       )}
     </div>
@@ -290,22 +326,21 @@ export interface CourtyardHudProps {
 
 export function CourtyardHud({ agents, lastEvent, playing, finished, view, selectedId, source, isLive, feedStatus, liveAvailable, livePaused, showStats, statsSink, onCity, onDistrict, onSelect, onTogglePlay, onReplay, onStep, onNeedsYou, onSource }: CourtyardHudProps) {
   const counts = cityCounts(agents)
+  const queue = useMemo(() => cityAttentionQueue(agents), [agents])
   const selected = agents.find((agent) => agent.id === selectedId)
   const [districtsOpen, setDistrictsOpen] = useState(false)
 
-  const districtCounts = new Map<DistrictId, number>()
-  for (const agent of agents) {
-    if (agent.freshness === 'historical') continue
-    const id = preferredDistrict(agent)
-    districtCounts.set(id, (districtCounts.get(id) ?? 0) + 1)
-  }
   const currentDistrict = view.scale === 'district' ? view.districtId : undefined
   const selectedAgent = agents.find((agent) => agent.id === (view.scale === 'agent' ? view.agentId : undefined))
   const activeDistrictId = currentDistrict ?? (selectedAgent ? preferredDistrict(selectedAgent) : undefined)
   const activeDistrict = activeDistrictId ? city.districtById(activeDistrictId) : undefined
-  const districtWorkers = activeDistrictId
-    ? agents.filter((agent) => agent.freshness !== 'historical' && preferredDistrict(agent) === activeDistrictId)
-    : []
+  const districtWorkers = useMemo(() => {
+    if (!activeDistrictId) return []
+    return urgencySort(
+      agents.filter((agent) => agent.freshness !== 'historical' && preferredDistrict(agent) === activeDistrictId),
+    )
+  }, [agents, activeDistrictId])
+  const queuePos = selectedId ? queue.findIndex((agent) => agent.id === selectedId) : -1
 
   return (
     <div className="proto-hud">
@@ -348,9 +383,29 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           <div><span>Needs you</span><strong>{counts.needsYou}</strong></div>
           <div><span>Complete</span><strong>{counts.complete}</strong></div>
           <button type="button" className="proto-needs" onClick={onNeedsYou} disabled={counts.needsYou === 0}>
-            <Flag size={13} weight="bold" /> Needs you <ArrowRight size={12} weight="bold" />
+            <Flag size={13} weight="bold" /> Needs you{counts.needsYou > 0 ? ` ${queuePos >= 0 ? `${queuePos + 1} of ${queue.length}` : queue.length}` : ''} <ArrowRight size={12} weight="bold" />
           </button>
         </div>
+
+        {queue.length > 0 && (
+          <ol className="proto-needs-list" aria-label="Needs-you queue, longest wait first">
+            {queue.map((agent, index) => (
+              <li key={agent.id}>
+                <button
+                  type="button"
+                  className={selectedId === agent.id ? 'is-selected' : ''}
+                  onClick={() => onSelect(agent.id)}
+                  title={`${agent.workspace} · ${agent.toolKind ?? 'no tool yet'}`}
+                >
+                  <span>{index + 1}. {agent.name}</span>
+                  <span className="proto-needs-wait">{formatAge(Date.now() - agent.lastSignalAt)}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        <Legend />
 
         <div className="proto-controls" role="group" aria-label={isLive ? 'View controls' : 'View and scenario controls'}>
           <button type="button" className={view.scale === 'city' ? 'is-active' : ''} onClick={onCity} aria-pressed={view.scale === 'city'}>
@@ -369,7 +424,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
         {districtsOpen && (
           <div className="proto-districts" role="group" aria-label="District navigator">
             {city.DISTRICTS.map((district) => {
-              const count = districtCounts.get(district.id) ?? 0
+              const count = counts.byDistrict[district.id]?.assigned ?? 0
               return (
                 <button
                   key={district.id}
