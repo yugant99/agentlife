@@ -1530,7 +1530,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         shadow-bias={-0.0005}
       />
 
-      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} worldLocked activeCount={skyCounts.working} needsYouCount={skyCounts.needsYou} />
+      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} worldLocked activeCount={skyCounts.working} needsYouCount={skyCounts.needsYou} detail={quality === 'low' ? 'lite' : 'full'} />
       <AttentionWedge targets={attentionTargets} onSelect={onSelect} />
 
       <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
