@@ -5,7 +5,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
 import { districtMeta } from '../data/demo'
-import { BlackHoleBackdrop } from './BlackHoleBackdrop'
+import { BlackHoleBackdrop } from './BlackHoleBackdropClassic'
 import type { AgentRecord, DistrictId, WorkerStatus } from '../types'
 
 // The Villages reference map (andrinr/villages, AGPL-3.0). Assets and the AGPL

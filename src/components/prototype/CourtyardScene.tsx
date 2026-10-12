@@ -9,7 +9,8 @@ import { preferredDistrict } from './agentModel'
 import type { CityAgent } from './agentModel'
 import * as city from './city'
 import type { DistrictId, StationId } from './city'
-import { urgencySort } from './datamap'
+import { AttentionWedge } from './AttentionWedge'
+import { cityCounts, urgencySort } from './datamap'
 import { paintFacadeColorMap, paintFacadeEmissiveMap } from './facadeTexture'
 import type { FacadeCanvas } from './facadeTexture'
 import { PROVIDER_PALETTE } from './heraldry'
@@ -1420,6 +1421,19 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
   const animate = !paused && !reducedMotion
   const stationPosition = (station: StationId): [number, number, number] => [city.PLAZAS[station][0], city.WALK_Y, city.PLAZAS[station][1]]
 
+  // Aggregate-only sky inputs and the needs-you edge pointers. Pointers aim at each
+  // waiting worker's own slot (urgency order), so several waiters never overlap.
+  const skyCounts = useMemo(() => cityCounts(agents), [agents])
+  const attentionTargets = useMemo(() => {
+    const slots = workerTargets(agents)
+    return urgencySort(agents)
+      .filter((agent) => agent.freshness === 'fresh' && agent.workState === 'needs-input')
+      .flatMap((agent) => {
+        const slot = slots.get(agent.id)
+        return slot ? [{ id: agent.id, x: slot.x, z: slot.z }] : []
+      })
+  }, [agents])
+
   return (
     <>
       <color attach="background" args={['#05070f']} />
@@ -1442,7 +1456,8 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         shadow-bias={-0.0005}
       />
 
-      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} worldLocked />
+      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} worldLocked activeCount={skyCounts.working} needsYouCount={skyCounts.needsYou} />
+      <AttentionWedge targets={attentionTargets} onSelect={onSelect} />
 
       <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[160, 160]} />
