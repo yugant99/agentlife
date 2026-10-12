@@ -16,6 +16,7 @@ import type { FacadeCanvas } from './facadeTexture'
 import { PROVIDER_PALETTE } from './heraldry'
 import { hasFreshPresence, selectCourierHandoff, TRAM_TOTAL } from './vehicles'
 import { createJadeWaterMaterial, STILL_TIME } from './waterMaterial'
+import type { SceneControlProps } from './sceneControl'
 import { WaterGlitter } from './WaterGlitter'
 
 // ---------------------------------------------------------------------------
@@ -1526,7 +1527,9 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
   )
 }
 
-export interface CourtyardSceneProps {
+// Wave 3 controls (quality tier, camera shots, frame-rate and interaction reports) come
+// from sceneControl.ts and are optional; until the scene consumes them they are inert.
+export interface CourtyardSceneProps extends SceneControlProps {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
   shipCount: number
