@@ -1,21 +1,26 @@
 import { Html } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { CityAgent } from './agentModel'
+import {
+  CREST_PALETTE, NEUTRAL_HUE, PROVIDER_KITS, PROVIDER_PALETTE, WORKSPACE_PENNANTS, dimHex,
+} from './heraldry'
+import type { Heraldry, HeraldrySilhouette } from './heraldry'
 import type { WorkerGesture } from './movement'
 import { cityStatusLabel } from './scenarioBridge'
 
 // A chunky courtyard figure with a readable silhouette: head, eyes, hands, boots,
-// optional beard and cloak, plus shoulder cloth so the upper body reads at a
-// distance. The parent group carries world scale (~2.2x) and heading; this component
-// only poses. Poses are driven through refs inside one useFrame; the pose-ref object
-// is created once and re-pointed each frame, so nothing allocates per frame and no
-// React state is touched per frame. Gestures follow the live phase/toolKind
-// immediately; stale figures sit and desaturate; historical figures walk out idle.
+// provider heraldry (silhouette + trim + crest-light finial, colour-blind safe by
+// shape as well as hue), model seniority ticks and a workspace pennant, plus
+// shoulder cloth so the upper body reads at a distance. The parent group carries
+// world scale (~2.2x) and heading; this component only poses. Poses are driven
+// through refs inside one useFrame; the pose-ref object is created once and
+// re-pointed each frame, so nothing allocates per frame and no React state is
+// touched per frame. Gestures follow the live phase/toolKind immediately; stale
+// figures sit and desaturate; historical figures walk out idle.
 
 const SKIN = '#d8b48c'
-const HAIR = '#9a7a52'
 const BOOT = '#2a2b2f'
 const METAL = '#a4abb1'
 const DARK = '#1b1d21'
@@ -24,47 +29,31 @@ const GREY = '#6a6f75'
 const CELEBRATION_SECONDS = 2.2
 const STEP_FREQ = 7
 
-type HatKind = 'helm' | 'hood' | 'cap'
+type HatKind = HeraldrySilhouette
 
-interface CharacterLook {
-  coat: string
-  accent: string
-  hat: HatKind
-  beard: boolean
-  cloak: boolean
-  fur: boolean
+/** Pre-made dimmed variants (stale figures grey 55% toward the legacy target).
+ * Computed once at module load, so renders and frame loops never allocate a
+ * THREE.Color or material. Covers every colour heraldry can emit. */
+const DIMMED = new Map<string, string>()
+for (
+  const seed of new Set<string>([
+    NEUTRAL_HUE,
+    GREY,
+    ...Object.values(PROVIDER_PALETTE),
+    ...Object.values(PROVIDER_KITS).map((kit) => kit.uniform),
+    ...CREST_PALETTE,
+    ...WORKSPACE_PENNANTS,
+  ])
+) {
+  DIMMED.set(seed, dimHex(seed))
 }
 
-const KNOWN_LOOKS: Record<string, CharacterLook> = {
-  bjorn: { coat: '#5a4a3c', accent: '#e0893b', hat: 'helm', beard: true, cloak: false, fur: true },
-  eirik: { coat: '#4a565e', accent: '#7fb0a8', hat: 'cap', beard: true, cloak: false, fur: false },
-  sigrid: { coat: '#4a6f68', accent: '#e6d6b0', hat: 'hood', beard: false, cloak: true, fur: false },
-  halvard: { coat: '#545a72', accent: '#d7d2e6', hat: 'helm', beard: true, cloak: false, fur: true },
-  astrid: { coat: '#5a6a4a', accent: '#d9b05a', hat: 'hood', beard: false, cloak: true, fur: false },
+function dimmedFor(hex: string): string {
+  return DIMMED.get(hex) ?? hex
 }
 
-const COATS = ['#5a4a3c', '#4a565e', '#4a6f68', '#545a72', '#5a6a4a', '#5c4a5a']
-const ACCENTS = ['#e0893b', '#7fb0a8', '#e6d6b0', '#d7d2e6', '#d9b05a', '#7fd0ff']
-const HATS: HatKind[] = ['helm', 'hood', 'cap']
-
-/** Stable identity per agent id: the five principals keep their exact looks, every
- * later arrival hashes deterministically onto the same palettes. */
-export function lookFor(id: string): CharacterLook {
-  const native = id.includes(':') ? id.slice(id.indexOf(':') + 1) : id
-  const known = KNOWN_LOOKS[native]
-  if (known) return known
-  let hash = 0
-  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) | 0
-  const pick = (n: number) => Math.abs(hash >> (n * 3)) % 100
-  return {
-    coat: COATS[pick(0) % COATS.length],
-    accent: ACCENTS[pick(1) % ACCENTS.length],
-    hat: HATS[pick(2) % HATS.length],
-    beard: pick(3) % 2 === 0,
-    cloak: pick(4) % 2 === 1,
-    fur: pick(5) % 3 === 0,
-  }
-}
+/** Shoulder-tick slots; sliced to the heraldry tick count (0-3). */
+const TICK_LEVELS = [0, 1, 2]
 
 export function isAttention(agent: Pick<CityAgent, 'workState' | 'freshness'>): boolean {
   return agent.freshness === 'fresh' && agent.workState === 'needs-input'
@@ -83,6 +72,8 @@ function resetPose(refs: PoseRefs) {
   refs.body.position.set(0, 0, 0)
   refs.body.rotation.set(0, 0, 0)
   refs.head.rotation.set(0, 0, 0)
+  refs.leftLeg.position.y = 0.62
+  refs.rightLeg.position.y = 0.62
   refs.leftLeg.rotation.set(0, 0, 0)
   refs.rightLeg.rotation.set(0, 0, 0)
   refs.leftArm.rotation.set(0, 0, 0)
@@ -176,13 +167,17 @@ function applyGesture(refs: PoseRefs, gesture: WorkerGesture, moving: boolean, t
     refs.rightArm.rotation.x += -s * 0.03
   }
   if (moving && gesture !== 'sit') {
-    // Walk the polyline: legs swing, boots lift, arms counter-swing unless they are
-    // holding a tool pose overhead (hammer/telescope/crate/banner keep the arms).
-    const swing = Math.sin(t * STEP_FREQ + phase)
-    refs.leftLeg.rotation.x = swing * 0.55
-    refs.rightLeg.rotation.x = -swing * 0.55
-    refs.body.position.y = Math.abs(Math.sin(t * STEP_FREQ + phase)) * 0.05
-    refs.body.rotation.x += 0.06
+    // Grounded walk: legs swing, each boot lifts on its forward pass so feet
+    // clear the ground instead of skating, and the body rides highest at
+    // mid-stance. Working figures (!moving) keep both feet planted.
+    const stride = t * STEP_FREQ + phase
+    const swing = Math.sin(stride)
+    refs.leftLeg.rotation.x = swing * 0.5
+    refs.rightLeg.rotation.x = -swing * 0.5
+    refs.leftLeg.position.y = 0.62 + Math.max(0, Math.sin(stride)) * 0.09
+    refs.rightLeg.position.y = 0.62 + Math.max(0, -Math.sin(stride)) * 0.09
+    refs.body.position.y = Math.abs(Math.cos(stride)) * 0.03
+    refs.body.rotation.x += 0.05
     if (gesture === 'idle' || gesture === 'scroll' || gesture === 'talk' || gesture === 'think') {
       refs.leftArm.rotation.x = -swing * 0.4 - 0.1
       refs.rightArm.rotation.x = swing * 0.4 - 0.1
@@ -225,6 +220,15 @@ function Headwear({ kind, color }: { kind: HatKind; color: string }) {
       </mesh>
     )
   }
+  if (kind === 'band') {
+    // Manual circlet: a flat unlit band, grey by contract.
+    return (
+      <mesh position={[0, 0.2, 0]}>
+        <cylinderGeometry args={[0.24, 0.24, 0.09, 14]} />
+        <meshStandardMaterial color={color} roughness={0.8} />
+      </mesh>
+    )
+  }
   return (
     <group>
       <mesh position={[0, 0.17, 0]} castShadow>
@@ -236,6 +240,43 @@ function Headwear({ kind, color }: { kind: HatKind; color: string }) {
         <meshStandardMaterial color={color} roughness={0.75} />
       </mesh>
     </group>
+  )
+}
+
+// Crest-light finial above the headwear: provider shape + hue, so identity reads
+// at city zoom by silhouette as well as colour. Unlit (grey, emissive 0) for
+// manual and stale figures.
+function Finial({ silhouette, color, lit }: { silhouette: HatKind; color: string; lit: boolean }) {
+  const emissiveIntensity = lit ? 1.6 : 0
+  if (silhouette === 'helm') {
+    return (
+      <mesh position={[0, 0.52, 0]}>
+        <coneGeometry args={[0.07, 0.34, 8]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} roughness={0.4} />
+      </mesh>
+    )
+  }
+  if (silhouette === 'hood') {
+    return (
+      <mesh position={[0, 0.55, 0]}>
+        <sphereGeometry args={[0.09, 10, 8]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} roughness={0.4} />
+      </mesh>
+    )
+  }
+  if (silhouette === 'cap') {
+    return (
+      <mesh position={[0, 0.55, 0]}>
+        <cylinderGeometry args={[0.045, 0.045, 0.4, 8]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={emissiveIntensity} roughness={0.4} />
+      </mesh>
+    )
+  }
+  return (
+    <mesh position={[0, 0.42, 0]}>
+      <cylinderGeometry args={[0.12, 0.12, 0.05, 12]} />
+      <meshStandardMaterial color={color} roughness={0.8} />
+    </mesh>
   )
 }
 
@@ -316,10 +357,16 @@ export interface CourtyardCharacterProps {
   selected: boolean
   /** Stale agents desaturate (seated pose comes through the `sit` gesture). */
   dimmed: boolean
+  /** Heraldry kit passed through from Workers (provider/model/role/workspace). */
+  heraldry: Heraldry
+  /** Tag culling decision from Workers: mount the Html name tag only when true. */
+  showTag: boolean
+  /** Hover reports up to Workers so the culled tag set can include it. */
+  onHover: (id: string | null) => void
   onSelect: (id: string) => void
 }
 
-export function CourtyardCharacter({ agent, gesture, moving, index, celebrationId, paused, reducedMotion, selected, dimmed, onSelect }: CourtyardCharacterProps) {
+export function CourtyardCharacter({ agent, gesture, moving, index, celebrationId, paused, reducedMotion, selected, dimmed, heraldry, showTag, onHover, onSelect }: CourtyardCharacterProps) {
   const body = useRef<THREE.Group>(null)
   const head = useRef<THREE.Group>(null)
   const leftLeg = useRef<THREE.Group>(null)
@@ -327,7 +374,6 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
   const leftArm = useRef<THREE.Group>(null)
   const rightArm = useRef<THREE.Group>(null)
   const glow = useRef<THREE.Mesh>(null)
-  const [hovered, setHovered] = useState(false)
 
   // Pose inputs are read through refs inside useFrame so a HUD re-render can never
   // capture a stale value mid-animation.
@@ -427,18 +473,15 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
     }
   })
 
-  const look = useMemo(() => lookFor(agent.id), [agent.id])
-  // Stale figures desaturate toward grey; the seated pose arrives via `sit`.
-  const coat = useMemo(() => {
-    if (!dimmed) return look.coat
-    return `#${new THREE.Color(look.coat).lerp(new THREE.Color(GREY), 0.55).getHexString()}`
-  }, [look.coat, dimmed])
-  const accent = useMemo(() => {
-    if (!dimmed) return look.accent
-    return `#${new THREE.Color(look.accent).lerp(new THREE.Color(GREY), 0.55).getHexString()}`
-  }, [look.accent, dimmed])
+  // Heraldry colours: uniform + trim from the provider kit, crest from the role,
+  // pennant from the workspace basename. Stale figures read the pre-made dimmed
+  // variants (module cache above): no colour or material is created per render.
+  const coat = dimmed ? dimmedFor(heraldry.uniform) : heraldry.uniform
+  const trim = dimmed ? dimmedFor(heraldry.hue) : heraldry.hue
+  const crest = dimmed ? dimmedFor(heraldry.crest) : heraldry.crest
+  const pennant = dimmed ? dimmedFor(heraldry.pennant) : heraldry.pennant
+  const lit = heraldry.lit && !dimmed
   const attention = isAttention(agent)
-  const showMarker = hovered || selected || attention
 
   return (
     <group
@@ -449,9 +492,9 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
       }}
       onPointerOver={(event) => {
         event.stopPropagation()
-        setHovered(true)
+        onHover(agent.id)
       }}
-      onPointerOut={() => setHovered(false)}
+      onPointerOut={() => onHover(null)}
     >
       {/* Forgiving invisible click target. Kept narrow so it never blocks a neighbour. */}
       <mesh position={[0, 1, 0]}>
@@ -481,10 +524,11 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
           </mesh>
         </group>
 
-        {look.cloak && (
+        {/* Archive hood robe: part of the claude-code silhouette, not per-agent trim. */}
+        {heraldry.silhouette === 'hood' && (
           <mesh position={[0, 0.9, -0.23]} rotation={[0.13, 0, 0]} castShadow>
             <boxGeometry args={[0.6, 1.02, 0.06]} />
-            <meshStandardMaterial color={accent} roughness={0.88} side={THREE.DoubleSide} />
+            <meshStandardMaterial color={trim} roughness={0.88} side={THREE.DoubleSide} />
           </mesh>
         )}
 
@@ -499,7 +543,7 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
         </mesh>
         <mesh position={[0, 0.82, 0]}>
           <boxGeometry args={[0.52, 0.1, 0.32]} />
-          <meshStandardMaterial color={accent} roughness={0.7} />
+          <meshStandardMaterial color={trim} roughness={0.7} />
         </mesh>
 
         {/* Soft glow pulse for talking (opacity driven in the frame loop). */}
@@ -511,19 +555,32 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
         {/* Shoulder cloth gives the upper body a readable silhouette from overview. */}
         <mesh position={[-0.31, 1.28, 0]} castShadow>
           <boxGeometry args={[0.22, 0.14, 0.32]} />
-          <meshStandardMaterial color={accent} roughness={0.8} />
+          <meshStandardMaterial color={trim} roughness={0.8} />
         </mesh>
         <mesh position={[0.31, 1.28, 0]} castShadow>
           <boxGeometry args={[0.22, 0.14, 0.32]} />
-          <meshStandardMaterial color={accent} roughness={0.8} />
+          <meshStandardMaterial color={trim} roughness={0.8} />
         </mesh>
 
-        {look.fur && (
-          <mesh position={[0, 1.34, 0]} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[0.23, 0.085, 5, 12]} />
-            <meshStandardMaterial color={HAIR} roughness={0.95} />
+        {/* Model seniority ticks stacked above the left shoulder pad. */}
+        {TICK_LEVELS.slice(0, heraldry.ticks).map((level) => (
+          <mesh key={level} position={[-0.31, 1.42 + level * 0.1, 0]}>
+            <boxGeometry args={[0.12, 0.06, 0.12]} />
+            <meshStandardMaterial color={trim} roughness={0.6} />
           </mesh>
-        )}
+        ))}
+
+        {/* Workspace pennant on a short pole above the right shoulder. */}
+        <group position={[0.31, 1.35, -0.05]}>
+          <mesh position={[0, 0.25, 0]}>
+            <cylinderGeometry args={[0.02, 0.02, 0.5, 6]} />
+            <meshStandardMaterial color={BOOT} roughness={0.9} />
+          </mesh>
+          <mesh position={[0.12, 0.4, 0]}>
+            <boxGeometry args={[0.22, 0.13, 0.02]} />
+            <meshStandardMaterial color={pennant} roughness={0.8} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
 
         <group ref={leftArm} position={[-0.3, 1.18, 0]}>
           <mesh position={[0, -0.26, 0]} castShadow>
@@ -544,7 +601,7 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
             <boxGeometry args={[0.15, 0.15, 0.15]} />
             <meshStandardMaterial color={SKIN} roughness={0.8} />
           </mesh>
-          <HeldProp gesture={gesture} accent={accent} />
+          <HeldProp gesture={gesture} accent={trim} />
         </group>
 
         <group ref={head} position={[0, 1.6, 0]}>
@@ -565,22 +622,24 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
             <coneGeometry args={[0.04, 0.07, 6]} />
             <meshStandardMaterial color={SKIN} roughness={0.82} />
           </mesh>
-          {look.beard && (
-            <mesh position={[0, -0.13, 0.13]} rotation={[0.26, 0, 0]} castShadow>
-              <coneGeometry args={[0.16, 0.3, 7]} />
-              <meshStandardMaterial color={HAIR} roughness={0.95} />
-            </mesh>
-          )}
-          <Headwear kind={look.hat} color={accent} />
+          {/* Role crest jewel on the brow: emissive except for manual/stale. */}
+          <mesh position={[0, 0.1, 0.21]}>
+            <sphereGeometry args={[0.05, 8, 8]} />
+            <meshStandardMaterial color={crest} emissive={crest} emissiveIntensity={lit ? 1.2 : 0} roughness={0.4} />
+          </mesh>
+          <Headwear kind={heraldry.silhouette} color={trim} />
+          <Finial silhouette={heraldry.silhouette} color={trim} lit={lit} />
         </group>
       </group>
 
-      <Html position={[0, 2.4, 0]} center zIndexRange={[2, 0]} style={{ pointerEvents: 'none', opacity: showMarker ? 1 : 0, transition: 'opacity 140ms ease' }}>
-        <div className={`proto-marker ${selected ? 'is-selected' : ''} ${attention ? 'is-attention' : ''}`}>
-          <span className="proto-marker-name">{agent.name}</span>
-          <span className="proto-marker-status">{cityStatusLabel(agent)}</span>
-        </div>
-      </Html>
+      {showTag && (
+        <Html position={[0, 2.4, 0]} center zIndexRange={[2, 0]} style={{ pointerEvents: 'none' }}>
+          <div className={`proto-marker ${selected ? 'is-selected' : ''} ${attention ? 'is-attention' : ''}`}>
+            <span className="proto-marker-name">{agent.name}</span>
+            <span className="proto-marker-status">{cityStatusLabel(agent)}</span>
+          </div>
+        </Html>
+      )}
     </group>
   )
 }
