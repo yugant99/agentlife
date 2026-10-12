@@ -16,7 +16,11 @@ import type { FacadeCanvas } from './facadeTexture'
 import { PROVIDER_PALETTE } from './heraldry'
 import { hasFreshPresence, selectCourierHandoff, TRAM_TOTAL } from './vehicles'
 import { createJadeWaterMaterial, STILL_TIME } from './waterMaterial'
-import type { SceneControlProps } from './sceneControl'
+import { QUALITY_SETTINGS } from './sceneControl'
+import type { CameraShot, QualityTier, SceneControlProps } from './sceneControl'
+import { GRADE_EXPOSURE, pipelineSettingsForTier, resolveQualityTier, shotDurationSec, smoothstep01 } from './grade'
+import { PostFX } from './postfx'
+import { Haze } from './haze'
 import { WaterGlitter } from './WaterGlitter'
 
 // ---------------------------------------------------------------------------
@@ -91,18 +95,21 @@ function useDrivenTime(animate: boolean) {
 
 // --- Camera -----------------------------------------------------------------
 
-function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions }: {
+function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions, shot }: {
   view: city.View
   revision: number
   reducedMotion: boolean
   controlsRef: ControlsRef
   agentPositions: Record<string, [number, number, number]>
+  shot?: CameraShot | null
 }) {
   const camera = useThree((state) => state.camera)
   const size = useThree((state) => state.size)
   const clock = useThree((state) => state.clock)
+  const shotId = useRef<string | null>(null)
   const anim = useRef({
     active: false,
+    isShot: false,
     start: 0,
     duration: TRAVEL_CITY,
     fromPos: new THREE.Vector3(),
@@ -115,6 +122,16 @@ function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions 
   const agentId = view.scale === 'agent' ? view.agentId : undefined
 
   useEffect(() => {
+    // A shot owns the camera while present; clearing it hands control back to
+    // the normal views (and the user) without a jump: no new move starts here.
+    if (shot) return
+    if (shotId.current !== null) {
+      shotId.current = null
+      if (anim.current.isShot) anim.current.active = false
+      const controls = controlsRef.current
+      if (controls) controls.enabled = true
+      return
+    }
     if (size.width <= 0 || size.height <= 0) return
     const target = new THREE.Vector3()
     let radius = city.CITY_RADIUS
@@ -156,11 +173,13 @@ function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions 
       } else {
         camera.lookAt(toTarget)
       }
+      anim.current.isShot = false
       anim.current.active = false
       return
     }
 
     anim.current.active = true
+    anim.current.isShot = false
     anim.current.start = clock.getElapsedTime()
     anim.current.duration = duration
     anim.current.fromPos.copy(camera.position)
@@ -168,13 +187,46 @@ function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions 
     anim.current.toPos.copy(toPos)
     anim.current.toTarget.copy(toTarget)
     if (controls) controls.enabled = false
-  }, [districtId, agentId, revision, size.width, size.height, reducedMotion, camera, clock, controlsRef, agentPositions])
+  }, [districtId, agentId, revision, size.width, size.height, reducedMotion, camera, clock, controlsRef, agentPositions, shot])
+
+  // Wave 3 camera shots: ease from the current pose to the shot over durationMs.
+  // A new id starts a move; the same id never restarts one. Reduced motion snaps.
+  useEffect(() => {
+    if (!shot) return
+    if (shot.id === shotId.current) return
+    shotId.current = shot.id
+    const toPos = new THREE.Vector3(shot.position[0], shot.position[1], shot.position[2])
+    const toTarget = new THREE.Vector3(shot.target[0], shot.target[1], shot.target[2])
+    const controls = controlsRef.current
+    if (reducedMotion || shot.durationMs <= 0) {
+      camera.position.copy(toPos)
+      if (controls) {
+        controls.target.copy(toTarget)
+        controls.enabled = true
+        controls.update()
+      } else {
+        camera.lookAt(toTarget)
+      }
+      anim.current.active = false
+      anim.current.isShot = true
+      return
+    }
+    anim.current.active = true
+    anim.current.isShot = true
+    anim.current.start = clock.getElapsedTime()
+    anim.current.duration = Math.max(0.01, shotDurationSec(shot.durationMs))
+    anim.current.fromPos.copy(camera.position)
+    anim.current.fromTarget.copy(controls ? controls.target : toTarget)
+    anim.current.toPos.copy(toPos)
+    anim.current.toTarget.copy(toTarget)
+    if (controls) controls.enabled = false
+  }, [shot, reducedMotion, camera, clock, controlsRef])
 
   useFrame(() => {
     const a = anim.current
     if (!a.active) return
     const t = Math.min(1, (clock.elapsedTime - a.start) / a.duration)
-    const eased = t * t * (3 - 2 * t)
+    const eased = smoothstep01(t)
     camera.position.lerpVectors(a.fromPos, a.toPos, eased)
     const controls = controlsRef.current
     if (controls) {
@@ -213,6 +265,22 @@ function StatsReporter({ sink, enabled }: { sink: { current: RenderStats }; enab
     sink.current.pixelRatio = gl.getPixelRatio()
     acc.current.frames = 0
     acc.current.ms = 0
+  })
+  return null
+}
+
+// Smoothed fps reported about once per second; accumulator only, no React state.
+function FrameRateReporter({ onFrameRate }: { onFrameRate?: (fps: number) => void }) {
+  const acc = useRef({ frames: 0, elapsed: 0 })
+  useFrame((_, delta) => {
+    if (!onFrameRate) return
+    acc.current.frames += 1
+    acc.current.elapsed += Math.min(delta, 0.25)
+    if (acc.current.elapsed < 1) return
+    const fps = acc.current.frames / acc.current.elapsed
+    acc.current.frames = 0
+    acc.current.elapsed = 0
+    onFrameRate(fps)
   })
   return null
 }
@@ -1340,13 +1408,17 @@ function DistrictLabel({ district, assigned, active, onDistrict }: { district: c
 
 const STATION_FACING = 0.5
 
-function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTint, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, onSelect, onDistrict, onReady }: {
+function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTint, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, quality, shot, onFrameRate, onUserInteract, onSelect, onDistrict, onReady }: {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
   shipCount: number
   workingCount?: number
   tramTint?: string
   selectedId?: string
+  quality: QualityTier
+  shot?: CameraShot | null
+  onFrameRate?: (fps: number) => void
+  onUserInteract?: () => void
   view: city.View
   focusRevision: number
   paused: boolean
@@ -1420,6 +1492,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
   }, [onReady])
 
   const animate = !paused && !reducedMotion
+  const settings = QUALITY_SETTINGS[quality]
   const stationPosition = (station: StationId): [number, number, number] => [city.PLAZAS[station][0], city.WALK_Y, city.PLAZAS[station][1]]
 
   // Aggregate-only sky inputs and the needs-you edge pointers. Pointers aim at each
@@ -1443,11 +1516,11 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
       <ambientLight intensity={0.72} color="#aebccd" />
       <hemisphereLight args={['#a9c2de', '#33322c', 0.85]} />
       <directionalLight
-        castShadow
+        castShadow={settings.shadows}
         position={[60, 90, 40]}
         intensity={2.2}
         color="#ffd9a2"
-        shadow-mapSize={[1024, 1024]}
+        shadow-mapSize={[settings.shadowMapSize, settings.shadowMapSize]}
         shadow-camera-left={-60}
         shadow-camera-right={60}
         shadow-camera-top={60}
@@ -1469,6 +1542,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
       <Plazas />
       <Waterworks beamXZ={beamXZ} beamOn={beamOn} animate={animate} />
       <WaterGlitter counts={glowCounts} beamXZ={beamXZ} beamOn={beamOn} animate={animate} />
+      <Haze density={settings.effectDensity} animate={animate} />
       <Buildings />
       <DistrictWindows counts={glowCounts} frozen={paused} reducedMotion={reducedMotion} />
       <Lamps />
@@ -1511,10 +1585,11 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         onSelect={onSelect}
       />
 
-      <CameraRig view={view} revision={focusRevision} reducedMotion={reducedMotion} controlsRef={controlsRef} agentPositions={agentPositions} />
+      <CameraRig view={view} revision={focusRevision} reducedMotion={reducedMotion} controlsRef={controlsRef} agentPositions={agentPositions} shot={shot} />
       <OrbitControls
         ref={controlsRef}
         makeDefault
+        onStart={onUserInteract}
         enablePan={false}
         enableDamping
         minDistance={5}
@@ -1523,12 +1598,15 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         maxPolarAngle={1.42}
       />
       <StatsReporter sink={statsSink} enabled={showStats} />
+      <FrameRateReporter onFrameRate={onFrameRate} />
+      <PostFX bloom={settings.bloom} paused={paused} reducedMotion={reducedMotion} />
     </>
   )
 }
 
-// Wave 3 controls (quality tier, camera shots, frame-rate and interaction reports) come
-// from sceneControl.ts and are optional; until the scene consumes them they are inert.
+// Wave 3 controls (quality tier, camera shots, frame-rate and interaction reports)
+// come from sceneControl.ts and are optional; CourtyardScene consumes them above
+// (quality defaults to 'high', absent shots leave the normal views in charge).
 export interface CourtyardSceneProps extends SceneControlProps {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
@@ -1548,14 +1626,22 @@ export interface CourtyardSceneProps extends SceneControlProps {
 }
 
 export function CourtyardScene(props: CourtyardSceneProps) {
+  const quality = resolveQualityTier(props.quality)
+  const settings = pipelineSettingsForTier(quality)
   return (
     <div className="proto-canvas" aria-hidden="true">
       <Canvas
-        shadows
-        dpr={DPR_RANGE}
+        shadows={settings.shadows}
+        dpr={[DPR_RANGE[0], settings.dprMax]}
         camera={CAMERA_CONFIG}
-        gl={GL_CONFIG}
-        onCreated={() => props.onReady()}
+        gl={{ ...GL_CONFIG, antialias: settings.bloom === 'off' }}
+        onCreated={(state) => {
+          // Single ACES grade: direct renders tone-map here, the composer path
+          // re-applies the same setting once in its OutputPass.
+          state.gl.toneMapping = THREE.ACESFilmicToneMapping
+          state.gl.toneMappingExposure = GRADE_EXPOSURE
+          props.onReady()
+        }}
         fallback={(
           <div className="proto-world-fallback">
             <p>3D city unavailable.</p>
@@ -1564,7 +1650,7 @@ export function CourtyardScene(props: CourtyardSceneProps) {
         )}
       >
         <Suspense fallback={null}>
-          <CourtyardWorld {...props} />
+          <CourtyardWorld {...props} quality={quality} />
         </Suspense>
       </Canvas>
     </div>
