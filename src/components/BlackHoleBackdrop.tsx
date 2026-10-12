@@ -7,7 +7,13 @@ import * as THREE from 'three'
 // not a geodesic ray tracer and never reflects agent status, activity, or progress.
 // Reads no telemetry; accepts only `reducedMotion`. One draw pass, no lights, no
 // shadows, no pointer handlers, no per-frame allocations.
+//
+// Optional world-locked orientation (`worldLocked`, set by the city): position follows
+// the camera so the sky stays behind geometry, but rotation never copies the camera, so
+// orbit parallaxes. Without it the original screen-fixed sky is unchanged.
+// Reduced motion pins the clock to a still frame; pause freezes phase.
 const STILL_TIME = 1.7
+export const SKY_STILL_TIME = STILL_TIME
 const SKY_RADIUS = 400
 
 const vertexShader = /* glsl */ `
@@ -46,8 +52,9 @@ const fragmentShader = /* glsl */ `
     // Quiet upper-screen placement for the hole. Lowered and eased toward center
     // from (0.28, 0.34) so the dark center and ring sit fully inside the normal
     // viewport, subordinate above the village, with margin to the top edge. The
-    // mesh copies the camera orientation each frame, so this direction is
-    // screen-fixed and orbit cannot move the hole out of frame.
+    // mesh follows the camera position each frame. With worldLocked it never copies the
+    // camera rotation, so this direction is fixed in world space and orbit parallaxes;
+    // otherwise it copies the rotation and the direction is camera-relative (original).
     vec3 C = normalize(uDir);
     float cosA = clamp(dot(d, C), -1.0, 1.0);
 
@@ -114,7 +121,7 @@ const fragmentShader = /* glsl */ `
   }
 `
 
-export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, direction = [0.18, 0.24, -1.0], paused = false }: {
+export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, direction = [0.18, 0.24, -1.0], paused = false, stillTime = STILL_TIME, worldLocked = false }: {
   reducedMotion: boolean
   // Optional, backward-compatible composition controls. Defaults reproduce the original
   // rendering exactly, so the main app's usage is unchanged.
@@ -122,6 +129,10 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
   brightness?: number
   direction?: [number, number, number]
   paused?: boolean
+  // Still pin for reduced motion: the clock holds this value instead of advancing.
+  stillTime?: number
+  /** City only: keep the hole fixed in world space so orbiting parallaxes. Default keeps the original screen-fixed sky. */
+  worldLocked?: boolean
 }) {
   const mesh = useRef<THREE.Mesh>(null)
   // Read inside the frame loop through refs so props never capture stale values.
@@ -129,6 +140,8 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
   reducedRef.current = reducedMotion
   const pausedRef = useRef(paused)
   pausedRef.current = paused
+  const stillRef = useRef(stillTime)
+  stillRef.current = stillTime
   // Local clock: advances only while not paused, so Pause freezes the sky and preserves
   // phase. Reduced motion holds the still frame instead.
   const time = useRef(STILL_TIME)
@@ -154,7 +167,7 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
     material.uniforms.uBright.value = brightness
     ;(material.uniforms.uDir.value as THREE.Vector3).set(direction[0], direction[1], direction[2]).normalize()
   }, [material, size, brightness, direction])
-  const geometry = useMemo(() => new THREE.SphereGeometry(SKY_RADIUS, 32, 24), [])
+  const geometry = useMemo(() => new THREE.SphereGeometry(SKY_RADIUS, 24, 16), [])
 
   useEffect(() => () => {
     material.dispose()
@@ -164,16 +177,17 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
   useFrame(({ camera, clock }) => {
     const node = mesh.current
     if (!node) return
-    // Camera-relative sky: follow position and orientation so the composition holds
-    // the same upper-screen placement through orbit. Both copies reuse the mesh's own
-    // vectors, so no per-frame allocations occur here.
+    // Follow position so the sky stays behind geometry; copy rotation only when the sky
+    // is not world-locked. Reuses the mesh's own vector, so no
+    // per-frame allocations occur here.
     node.position.copy(camera.position)
-    node.quaternion.copy(camera.quaternion)
+    if (!worldLocked) node.quaternion.copy(camera.quaternion)
     const now = clock.elapsedTime
     const delta = last.current === null ? 0 : Math.max(0, now - last.current)
     last.current = now
+    const still = stillRef.current
     if (reducedRef.current) {
-      if (material.uniforms.uTime.value !== STILL_TIME) material.uniforms.uTime.value = STILL_TIME
+      if (material.uniforms.uTime.value !== still) material.uniforms.uTime.value = still
       return
     }
     // Pause freezes the sky; hidden tabs skip the delta. Phase is preserved either way.

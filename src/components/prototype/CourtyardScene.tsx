@@ -9,6 +9,8 @@ import { preferredDistrict } from './agentModel'
 import type { CityAgent } from './agentModel'
 import * as city from './city'
 import type { DistrictId, StationId } from './city'
+import { paintFacadeColorMap, paintFacadeEmissiveMap } from './facadeTexture'
+import type { FacadeCanvas } from './facadeTexture'
 
 // ---------------------------------------------------------------------------
 // Mythic City. (File name is retained from the earlier courtyard prototype; the
@@ -35,10 +37,10 @@ const FORWARD = new THREE.Vector3(0, 0, 1)
 const TRAVEL_CITY = 0.65
 const TRAVEL_AGENT = 0.42
 
-// Station plazas are staffed; the black-hole direction is in camera space so the hole
-// stays in the sky band above the skyline as the camera orbits.
-// Camera-space direction for the city's black hole: low enough that the full silhouette
-// and lensed arch sit inside the sky band above the skyline.
+// Station plazas are staffed; the black-hole direction is world-locked so orbit
+// parallaxes around it. The hole sits in the sky band above the skyline.
+// World-locked direction for the city's black hole: low enough that the full
+// silhouette and lensed arch sit inside the sky band above the skyline.
 const BLACK_HOLE_DIRECTION: [number, number, number] = [0.03, 0.21, -1.0]
 
 export interface RenderStats {
@@ -75,9 +77,10 @@ function useDrivenTime(animate: boolean) {
   return time
 }
 
-// Buildings are assembled from instanced archetype layers (podium / main / upper) with
-// sparse emissive facade-window panels, plus solid roof caps and spires. No per-building
-// textures are created, so there is nothing to dispose.
+// Buildings are assembled from instanced archetype layers (podium / main / upper)
+// with a shared 256x512 facade atlas (map + emissiveMap, flat-colour fallback),
+// per-district emissive window panels, solid roof caps plus one instanced
+// district-tinted parapet/trim mesh, spires, and a hero crown above its lattice cell.
 
 // --- Camera -----------------------------------------------------------------
 
@@ -452,20 +455,20 @@ function Gateway() {
   const center = city.districtById('gateway').center
   return (
     <group position={[center[0], 0, center[1]]}>
-      <mesh position={[-5, 8, 0]} receiveShadow>
-        <boxGeometry args={[3.4, 16, 3.4]} />
+      <mesh position={[-5, 12, 0]} receiveShadow>
+        <boxGeometry args={[3.4, 24, 3.4]} />
         <meshStandardMaterial color="#38334a" roughness={0.9} />
       </mesh>
-      <mesh position={[5, 8, 0]} receiveShadow>
-        <boxGeometry args={[3.4, 16, 3.4]} />
+      <mesh position={[5, 12, 0]} receiveShadow>
+        <boxGeometry args={[3.4, 24, 3.4]} />
         <meshStandardMaterial color="#38334a" roughness={0.9} />
       </mesh>
-      <mesh position={[0, 17, 0]} receiveShadow>
+      <mesh position={[0, 25, 0]} receiveShadow>
         <boxGeometry args={[15, 2.4, 3.4]} />
         <meshStandardMaterial color="#403a52" roughness={0.9} />
       </mesh>
-      <mesh position={[0, 8, 0]}>
-        <planeGeometry args={[7, 14]} />
+      <mesh position={[0, 12, 0]}>
+        <planeGeometry args={[7, 22]} />
         <meshStandardMaterial color="#7fd0ff" emissive="#7fd0ff" emissiveIntensity={0.8} transparent opacity={0.35} side={THREE.DoubleSide} />
       </mesh>
     </group>
@@ -772,8 +775,9 @@ function Plazas() {
 
 // District window glow follows the count of fresh active workers there, eased over
 // about 1.5 s. Windows are grouped per district so each neighborhood glows on its
-// own; the easing freezes while paused.
-function DistrictWindows({ counts, frozen }: { counts: Record<DistrictId, number>; frozen: boolean }) {
+// own; the easing freezes while paused and snaps (no ease) under reduced motion
+// so the still scene stays truthful without animation.
+function DistrictWindows({ counts, frozen, reducedMotion }: { counts: Record<DistrictId, number>; frozen: boolean; reducedMotion: boolean }) {
   const mats = useRef<Array<THREE.MeshStandardMaterial | null>>([])
   const current = useRef<number[]>([0.4, 0.4, 0.4, 0.4, 0.4, 0.4])
   const perDistrict = useMemo(
@@ -784,9 +788,18 @@ function DistrictWindows({ counts, frozen }: { counts: Record<DistrictId, number
     if (frozen) return
     city.DISTRICTS.forEach((district, index) => {
       const target = 0.35 + 0.3 * Math.min(3, counts[district.id] ?? 0)
-      current.current[index] += (target - current.current[index]) * Math.min(1, delta / 1.5)
       const material = mats.current[index]
-      if (material) material.emissiveIntensity = current.current[index]
+      if (!material) return
+      if (reducedMotion) {
+        // Still pin: snap to the truthful level instead of easing.
+        if (current.current[index] !== target) {
+          current.current[index] = target
+          material.emissiveIntensity = target
+        }
+        return
+      }
+      current.current[index] += (target - current.current[index]) * Math.min(1, delta / 1.5)
+      material.emissiveIntensity = current.current[index]
     })
   })
   return (
@@ -810,18 +823,61 @@ function DistrictWindows({ counts, frozen }: { counts: Record<DistrictId, number
   )
 }
 
+function useFacadeMaps(): { map: THREE.Texture | null; emissiveMap: THREE.Texture | null } {
+  const maps = useMemo(() => {
+    try {
+      if (typeof document === 'undefined') return { map: null, emissiveMap: null }
+      const factory = (w: number, h: number): FacadeCanvas | null => {
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        return canvas as unknown as FacadeCanvas
+      }
+      // Static mid-lit atlas for the instanced shells; per-district live glow
+      // stays in DistrictWindows (emissiveIntensity from the same active counts).
+      const colorCanvas = paintFacadeColorMap(factory, 0.5)
+      const emissiveCanvas = paintFacadeEmissiveMap(factory, 0.5)
+      if (!colorCanvas || !emissiveCanvas) return { map: null, emissiveMap: null }
+      const map = new THREE.CanvasTexture(colorCanvas as unknown as HTMLCanvasElement)
+      map.colorSpace = THREE.SRGBColorSpace
+      map.anisotropy = 4
+      const emissiveMap = new THREE.CanvasTexture(emissiveCanvas as unknown as HTMLCanvasElement)
+      emissiveMap.colorSpace = THREE.SRGBColorSpace
+      emissiveMap.anisotropy = 4
+      return { map, emissiveMap }
+    } catch {
+      // Degrade to flat colour when the texture is unavailable.
+      return { map: null, emissiveMap: null }
+    }
+  }, [])
+  useEffect(() => () => {
+    maps.map?.dispose()
+    maps.emissiveMap?.dispose()
+  }, [maps])
+  return maps
+}
+
 function Buildings() {
+  const facade = useFacadeMaps()
   const layers: { parts: city.BuildingPart[]; color: string; roughness: number; metalness: number }[] = [
-    { parts: city.PODIUM_PARTS, color: '#ffffff', roughness: 0.92, metalness: 0.06 },
-    { parts: city.MAIN_PARTS, color: '#ffffff', roughness: 0.88, metalness: 0.08 },
-    { parts: city.UPPER_PARTS, color: '#ffffff', roughness: 0.9, metalness: 0.1 },
+    { parts: city.PODIUM_PARTS, color: '#ffffff', roughness: 0.92, metalness: 0.12 },
+    { parts: city.MAIN_PARTS, color: '#ffffff', roughness: 0.88, metalness: 0.12 },
+    { parts: city.UPPER_PARTS, color: '#ffffff', roughness: 0.9, metalness: 0.14 },
   ]
   return (
     <group>
       {layers.map((layer, index) => (
         <Instances key={index} limit={layer.parts.length} receiveShadow>
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color={layer.color} roughness={layer.roughness} metalness={layer.metalness} />
+          <meshStandardMaterial
+            color={layer.color}
+            roughness={layer.roughness}
+            metalness={layer.metalness}
+            map={facade.map ?? undefined}
+            emissiveMap={facade.emissiveMap ?? undefined}
+            emissive="#ffcf8a"
+            emissiveIntensity={facade.map ? 0.22 : 0}
+          />
           {layer.parts.map((part, k) => (
             <Instance key={k} color={part.color} position={[part.x, part.y0 + part.h / 2, part.z]} scale={[part.w, part.h, part.d]} />
           ))}
@@ -834,6 +890,19 @@ function Buildings() {
           <Instance key={index} position={[cap.x, cap.y, cap.z]} scale={[cap.w, cap.h, cap.d]} />
         ))}
       </Instances>
+      {/* Single instanced parapet/trim mesh, tinted per district. */}
+      <Instances limit={city.ROOFCAPS.length} receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.7} metalness={0.25} />
+        {city.ROOFCAPS.map((cap, index) => (
+          <Instance
+            key={index}
+            color={city.TRIM[cap.district]}
+            position={[cap.x, cap.y + 0.55, cap.z]}
+            scale={[cap.w * 1.02, 0.4, cap.d * 1.02]}
+          />
+        ))}
+      </Instances>
       <Instances limit={city.SPIRES.length}>
         <coneGeometry args={[1, 1, 5]} />
         <meshStandardMaterial color="#4a5666" roughness={0.7} metalness={0.35} />
@@ -841,6 +910,29 @@ function Buildings() {
           <Instance key={index} position={[spire.x, spire.y + spire.h / 2, spire.z]} scale={[spire.r, spire.h, spire.r]} />
         ))}
       </Instances>
+      <HeroCrown />
+    </group>
+  )
+}
+
+// Hero crown: the hero's boxes and spire already come from the instanced layers;
+// the three amber rings make the needle read above the hole band at city zoom.
+function HeroCrown() {
+  const [hx, hz] = city.HERO_CELL
+  return (
+    <group position={[hx, 0, hz]}>
+      <mesh position={[0, 34.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[4.2, 0.3, 6, 24]} />
+        <meshStandardMaterial color="#ffbe6a" emissive="#ffbe6a" emissiveIntensity={2.0} roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 52.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[3.0, 0.26, 6, 20]} />
+        <meshStandardMaterial color="#ffd28a" emissive="#ffd28a" emissiveIntensity={2.0} roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 62.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.9, 0.22, 6, 18]} />
+        <meshStandardMaterial color="#ffd28a" emissive="#ffd28a" emissiveIntensity={2.0} roughness={0.5} />
+      </mesh>
     </group>
   )
 }
@@ -1136,13 +1228,17 @@ function QuayProps() {
 
 // --- Labels ------------------------------------------------------------------
 
-function DistrictLabel({ district, count, onDistrict }: { district: city.District; count: number; onDistrict: (id: DistrictId) => void }) {
+function DistrictLabel({ district, assigned, active, onDistrict }: { district: city.District; assigned: number; active: number; onDistrict: (id: DistrictId) => void }) {
   const y = district.radius * 1.05 + 10
   return (
     <Html position={[district.center[0], y, district.center[1]]} center zIndexRange={[1, 0]}>
       <button type="button" className="proto-district-label" onClick={(event) => { event.stopPropagation(); onDistrict(district.id) }}>
         <span>{district.name}</span>
-        <small>{count === 0 ? 'No workers assigned' : `${count} ${count === 1 ? 'worker' : 'workers'}`}</small>
+        <small>
+          {assigned === 0
+            ? 'No workers assigned'
+            : `${assigned} assigned · ${active} active`}
+        </small>
       </button>
     </Html>
   )
@@ -1217,17 +1313,17 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
         position={[60, 90, 40]}
         intensity={2.2}
         color="#ffd9a2"
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-80}
-        shadow-camera-right={80}
-        shadow-camera-top={80}
-        shadow-camera-bottom={-80}
+        shadow-mapSize={[1024, 1024]}
+        shadow-camera-left={-60}
+        shadow-camera-right={60}
+        shadow-camera-top={60}
+        shadow-camera-bottom={-60}
         shadow-camera-near={1}
         shadow-camera-far={300}
         shadow-bias={-0.0005}
       />
 
-      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} />
+      <BlackHoleBackdrop reducedMotion={reducedMotion} paused={paused} size={0.8} brightness={1.05} direction={BLACK_HOLE_DIRECTION} worldLocked />
 
       <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[160, 160]} />
@@ -1238,7 +1334,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
       <Plazas />
       <Waterworks />
       <Buildings />
-      <DistrictWindows counts={glowCounts} frozen={paused} />
+      <DistrictWindows counts={glowCounts} frozen={paused} reducedMotion={reducedMotion} />
       <Lamps />
 
       <Citadel />
@@ -1261,7 +1357,13 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
       <QuayProps />
 
       {view.scale === 'city' && city.DISTRICTS.map((district) => (
-        <DistrictLabel key={district.id} district={district} count={districtCounts.get(district.id) ?? 0} onDistrict={onDistrict} />
+        <DistrictLabel
+          key={district.id}
+          district={district}
+          assigned={districtCounts.get(district.id) ?? 0}
+          active={glowCounts[district.id] ?? 0}
+          onDistrict={onDistrict}
+        />
       ))}
 
       <Workers
