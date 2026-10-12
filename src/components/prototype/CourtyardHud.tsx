@@ -11,6 +11,11 @@ import * as city from './city'
 import type { DistrictId } from './city'
 import type { RenderStats } from './CourtyardScene'
 import { DATAMAP_ROWS, cityCounts, formatAge, overflowLabel, truthCard, urgencySort } from './datamap'
+import './history.css'
+import {
+  diffHistoryEvents, emptyHistory, MINUTE_MS, recordHistoryMinute, toHistorySnapshot,
+} from './history.ts'
+import type { HistoryBucket, HistorySnapshot } from './history.ts'
 import { cityAttentionQueue, cityStatusLabel } from './scenarioBridge'
 import { PROVIDER_LABEL } from './scenario'
 import { CitySound, diffSoundEvents } from './citySound.ts'
@@ -92,6 +97,115 @@ function Legend({ active, needsYou }: { active: number; needsYou: number }) {
   )
 }
 
+function HistoryRibbon({ agents }: { agents: CityAgent[] }) {
+  const prevRef = useRef<HistorySnapshot[] | null>(null)
+  const bufferRef = useRef<HistoryBucket[]>(emptyHistory())
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [hover, setHover] = useState('Last 60 min — hover or tap a minute for counts')
+
+  // Snapshot diffs keyed by id + lastSignalAt: the first pass only seeds prev
+  // so a mount or re-render never double-counts.
+  useEffect(() => {
+    const next = agents.map(toHistorySnapshot)
+    const prev = prevRef.current
+    prevRef.current = next
+    if (!prev) return
+    const events = diffHistoryEvents(prev, next)
+    const total = events.ships.length + events.tests.length + events.needs.length + events.arrivals.length
+    if (total === 0) return
+    bufferRef.current = recordHistoryMinute(bufferRef.current, Date.now(), events)
+  }, [agents])
+
+  // One small canvas, redrawn at 1 Hz from the 60-entry ring buffer.
+  useEffect(() => {
+    function draw() {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      const W = canvas.width
+      const H = canvas.height
+      ctx.clearRect(0, 0, W, H)
+      const nowStart = Math.floor(Date.now() / MINUTE_MS) * MINUTE_MS
+      const byStart = new Map(bufferRef.current.map((bucket) => [bucket.start, bucket]))
+      const colW = W / 60
+      for (let i = 0; i < 60; i += 1) {
+        const start = nowStart - (59 - i) * MINUTE_MS
+        const bucket = byStart.get(start)
+        const x = i * colW
+        ctx.fillStyle = 'rgba(255,255,255,0.07)'
+        ctx.fillRect(x + colW / 2 - 0.5, 4, 1, H - 10)
+        if (!bucket) continue
+        const segments: [number, string][] = [
+          [bucket.arrivals, '#dfe7e2'],
+          [bucket.tests, '#7fd0ff'],
+          [bucket.ships, '#d9b05a'],
+          [bucket.needs, '#e0a03b'],
+        ]
+        let y = H - 6
+        for (const [count, color] of segments) {
+          const capped = Math.min(6, count)
+          for (let k = 0; k < capped; k += 1) {
+            ctx.fillStyle = color
+            ctx.fillRect(x + 1, y - 3, colW - 2, 3)
+            y -= 4
+            if (y < 6) break
+          }
+        }
+      }
+    }
+    draw()
+    const id = window.setInterval(draw, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  function describeAt(clientX: number) {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const index = Math.max(0, Math.min(59, Math.floor(((clientX - rect.left) / rect.width) * 60)))
+    const nowStart = Math.floor(Date.now() / MINUTE_MS) * MINUTE_MS
+    const start = nowStart - (59 - index) * MINUTE_MS
+    const bucket = bufferRef.current.find((entry) => entry.start === start)
+    const time = new Date(start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (!bucket) {
+      setHover(`${time} — no ticks`)
+      return
+    }
+    setHover(
+      `${time} — ship ${bucket.ships} · test ${bucket.tests} · needs ${bucket.needs} · arrivals ${bucket.arrivals}`,
+    )
+  }
+
+  return (
+    <div className="proto-history" role="group" aria-label="Last hour of city events">
+      <div className="proto-history-head">
+        <span className="proto-history-title">History · 60 min</span>
+        <span className="proto-history-key" aria-hidden="true">
+          <span><i style={{ background: '#d9b05a' }} />ship</span>
+          <span><i style={{ background: '#7fd0ff' }} />test</span>
+          <span><i style={{ background: '#e0a03b' }} />needs</span>
+          <span><i style={{ background: '#dfe7e2' }} />arrival</span>
+        </span>
+      </div>
+      <canvas
+        ref={canvasRef}
+        className="proto-history-canvas"
+        width={264}
+        height={52}
+        aria-label="Per-minute event ticks for ship, test, needs-input and arrivals"
+        onMouseMove={(event) => describeAt(event.clientX)}
+        onMouseLeave={() => setHover('Last 60 min — hover or tap a minute for counts')}
+        onTouchStart={(event) => {
+          if (event.touches.length > 0) describeAt(event.touches[0].clientX)
+        }}
+      />
+      <p className="proto-history-hover" aria-live="polite">{hover}</p>
+    </div>
+  )
+}
+
 function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
   agent: CityAgent
   source: 'live' | 'simulation'
@@ -126,13 +240,21 @@ function Inspector({ agent, source, event, eventLabel, onBack, onCity }: {
       <details className="proto-raw">
         <summary>Raw fields</summary>
         <dl>
-          <div><dt>Status</dt><dd>{agent.workState}</dd></div>
-          <div><dt>Phase</dt><dd>{agent.phase}</dd></div>
-          <div><dt>Tool</dt><dd>{agent.toolKind ?? 'no tool yet'}</dd></div>
-          <div><dt>Freshness</dt><dd>{agent.freshness} · {formatAge(Date.now() - agent.lastSignalAt)}</dd></div>
-          <div><dt>{source === 'live' ? 'Provider' : 'Example provider'}</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
-          <div><dt>Workspace</dt><dd>{agent.workspace}</dd></div>
-          {agent.model ? <div><dt>Model</dt><dd>{agent.model}</dd></div> : null}
+          <div><dt>id</dt><dd>{agent.id}</dd></div>
+          <div><dt>name</dt><dd>{agent.name}</dd></div>
+          <div><dt>source</dt><dd>{agent.source} · {source}</dd></div>
+          <div><dt>parentId</dt><dd>{agent.parentId ?? '—'}</dd></div>
+          <div><dt>depth</dt><dd>{agent.depth}</dd></div>
+          <div><dt>role</dt><dd>{agent.role ?? '—'}</dd></div>
+          <div><dt>model</dt><dd>{agent.model ?? '—'}</dd></div>
+          <div><dt>workspace</dt><dd>{agent.workspace}</dd></div>
+          <div><dt>provider</dt><dd>{PROVIDER_LABEL[agent.provider]}</dd></div>
+          <div><dt>workState</dt><dd>{agent.workState}</dd></div>
+          <div><dt>freshness</dt><dd>{agent.freshness} · {formatAge(Date.now() - agent.lastSignalAt)}</dd></div>
+          <div><dt>phase</dt><dd>{agent.phase}</dd></div>
+          <div><dt>toolKind</dt><dd>{agent.toolKind ?? '—'}</dd></div>
+          <div><dt>lastSignalAt</dt><dd>{agent.lastSignalAt} ({new Date(agent.lastSignalAt).toLocaleTimeString()})</dd></div>
+          <div><dt>startedAt</dt><dd>{agent.startedAt !== undefined ? `${agent.startedAt} (${new Date(agent.startedAt).toLocaleTimeString()})` : '—'}</dd></div>
         </dl>
       </details>
       <p className="proto-inspector-event"><span>{eventLabel}</span>{event}</p>
@@ -178,6 +300,7 @@ function Roster({ agents, selectedId, onSelect }: { agents: CityAgent[]; selecte
   const [open, setOpen] = useState(false)
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
   const sorted = useMemo(() => urgencySort(agents), [agents])
+  const counts = useMemo(() => cityCounts(agents), [agents])
   const active = sorted.filter((agent) => agent.freshness !== 'historical')
   const past = sorted.filter((agent) => agent.freshness === 'historical')
   const rows = [...active, ...past]
@@ -203,6 +326,21 @@ function Roster({ agents, selectedId, onSelect }: { agents: CityAgent[]; selecte
         <small>{agents.length}</small>
         <CaretDown size={13} weight="bold" className="proto-roster-caret" />
       </button>
+      <div className="proto-pips" aria-label="Per-district assigned and active counts">
+        {city.DISTRICTS.map((district) => {
+          const districtCount = counts.byDistrict[district.id]
+          return (
+            <div
+              key={district.id}
+              className="proto-pip"
+              title={`${district.name}: ${districtCount.assigned} assigned, ${districtCount.active} active`}
+            >
+              <strong>{district.name}</strong>
+              <span><span className="proto-pip-dot" aria-hidden="true" />{districtCount.assigned} · {districtCount.active} active</span>
+            </div>
+          )
+        })}
+      </div>
       {open && (
         <div className="proto-roster-list" role="group" aria-label="Agent roster, urgency-sorted">
           {active.map((agent) => {
@@ -522,6 +660,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
         )}
 
         <p className="proto-event"><span>{isLive ? 'Live' : 'Scenario'}</span>{lastEvent}</p>
+        <HistoryRibbon agents={agents} />
         <p className="proto-hint">City shows all districts. Pick a district or a figure; Escape steps back one level. M sound · N next needs-you.</p>
       </div>
 

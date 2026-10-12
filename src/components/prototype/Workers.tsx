@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { Html } from '@react-three/drei'
 import * as THREE from 'three'
 import { CourtyardCharacter, STEP_FREQ } from './CourtyardCharacter'
 import { GATEWAY_ARCH, WALK_Y, WORK_SPOTS } from './city'
 import type { DistrictId } from './city'
 import type { CityAgent, ToolKind } from './agentModel'
-import { DWELL_MIN_MS, MAX_RENDERED_WORKERS } from './agentModel'
+import { DWELL_MIN_MS, MAX_RENDERED_WORKERS, preferredDistrict } from './agentModel'
+import { overflowLabel } from './datamap'
 import { heraldryFor } from './heraldry'
 import { buildRoadGraph, pathToSpot } from './cityGraph'
 import type { RoadGraph } from './cityGraph'
 import {
-  canLeaveSpot, childOffset, dominantToolKind, gestureForWorker, layoutTargets,
+  canLeaveSpot, childOffset, dominantToolKind, gestureForWorker, layoutTargets, overflowTargets,
   RIBBON_MAX_POINTS, ribbonPointsFromRoute, ringFor, RING_COLORS, selectRendered, targetDistrict, tripSpeed, selectLeaving,
 } from './movement'
 import type { ToolSample } from './movement'
@@ -685,6 +687,32 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
     }
   })
 
+  // Crowd overflow (Lane 3B): rendered agents walk the inner ring via the
+  // reconciler; overflow sits static on the outer ring with one Html label per
+  // district (at most 6, no per-agent Html). Discrete memo, never per frame.
+  const crowd = useMemo(() => {
+    const split = selectRendered(agents)
+    const targets = overflowTargets(split.overflow, CENTERS)
+    const shownBy = new Map<DistrictId, number>()
+    const totalBy = new Map<DistrictId, number>()
+    for (const agent of split.rendered) {
+      const district = preferredDistrict(agent)
+      shownBy.set(district, (shownBy.get(district) ?? 0) + 1)
+      totalBy.set(district, (totalBy.get(district) ?? 0) + 1)
+    }
+    for (const agent of split.overflow) {
+      const district = preferredDistrict(agent)
+      totalBy.set(district, (totalBy.get(district) ?? 0) + 1)
+    }
+    const labels: { district: DistrictId; text: string }[] = []
+    for (const [district, total] of totalBy) {
+      const shown = shownBy.get(district) ?? 0
+      if (total > shown) labels.push({ district, text: overflowLabel(shown, total) })
+    }
+    labels.sort((a, b) => (a.district < b.district ? -1 : 1))
+    return { overflow: split.overflow, targets, labels }
+  }, [agents])
+
   // Age channels freeze in still modes: the frozen wall clock holds the last
   // desaturation and halo instead of advancing them.
   const nowWall = paused || reducedMotion ? stillNow.current || Date.now() : Date.now()
@@ -782,6 +810,38 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
               </mesh>
             )}
           </group>
+        )
+      })}
+      {/* Overflow sitters: cheap seated figures on the outer ring, no shadows,
+          no tags, no beams. Static positions from movement.overflowTargets. */}
+      {crowd.overflow.map((agent) => {
+        const target = crowd.targets.get(agent.id)
+        if (!target) return null
+        const sitterRing = ringFor(agent, false)
+        return (
+          <group key={`sit-${agent.id}`} position={[target.x, WALK_Y, target.z]}>
+            <mesh position={[0, 0.55, 0]}>
+              <cylinderGeometry args={[0.42, 0.5, 1.1, 8]} />
+              <meshStandardMaterial color="#4a4e51" roughness={0.95} />
+            </mesh>
+            <mesh position={[0, 1.3, 0]}>
+              <sphereGeometry args={[0.3, 8, 6]} />
+              <meshStandardMaterial color="#8a8f96" roughness={0.9} />
+            </mesh>
+            <mesh position={[0, 0.07, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[1.02, 1.28, 24]} />
+              <meshBasicMaterial color={RING_COLORS[sitterRing]} transparent opacity={0.55} depthWrite={false} />
+            </mesh>
+          </group>
+        )
+      })}
+      {/* One overflow label per district with overflow, from overflowLabel. */}
+      {crowd.labels.map(({ district, text }) => {
+        const [cx, cz] = CENTERS[district]
+        return (
+          <Html key={`overflow-${district}`} position={[cx, 7, cz]} center zIndexRange={[1, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="proto-overflow-tag">{text}</div>
+          </Html>
         )
       })}
       <lineSegments geometry={tetherGeom.current} frustumCulled={false}>

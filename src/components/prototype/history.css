@@ -1,0 +1,122 @@
+/* History ribbon + crowd polish (Wave 3 Lane 3B). Imported by CourtyardHud;
+   prototype.css is frozen, so lane-owned styles live here. */
+
+.proto-history {
+  width: 100%;
+  padding: 8px 10px 9px;
+  background: var(--proto-panel);
+  border: 1px solid var(--proto-border);
+  border-radius: 6px;
+  backdrop-filter: blur(9px);
+}
+
+.proto-history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.proto-history-title {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--proto-muted);
+}
+
+.proto-history-key {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--proto-mono);
+  font-size: 8px;
+  color: var(--proto-muted);
+}
+
+.proto-history-key i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-radius: 1px;
+  font-style: normal;
+}
+
+.proto-history-canvas {
+  display: block;
+  width: 100%;
+  height: 52px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: crosshair;
+}
+
+.proto-history-hover {
+  margin: 5px 0 0;
+  min-height: 13px;
+  font-family: var(--proto-mono);
+  font-size: 9px;
+  color: var(--proto-muted);
+}
+
+/* Per-district pips in the roster: assigned vs active (glow) counts. */
+.proto-pips {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--proto-border-soft);
+}
+
+.proto-pip {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border: 1px solid var(--proto-border-soft);
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.proto-pip strong {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proto-pip span {
+  font-family: var(--proto-mono);
+  font-size: 8px;
+  color: var(--proto-muted);
+  white-space: nowrap;
+}
+
+.proto-pip-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--proto-teal);
+  vertical-align: baseline;
+}
+
+/* In-world overflow tag: one Html per district with overflow, no per-agent Html. */
+.proto-overflow-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  color: var(--proto-text);
+  background: rgba(10, 17, 22, 0.84);
+  border: 1px dashed var(--proto-border);
+  border-radius: 4px;
+  font-family: var(--proto-mono);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
