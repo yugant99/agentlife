@@ -1,6 +1,6 @@
 import {
   Anchor, Archive, ArrowCounterClockwise, ArrowLeft, ArrowRight, Buildings, CaretDown, CheckCircle, CloudSlash,
-  Flag, FlagBanner, Gauge, Hammer, HardHat, Hourglass, List, MapTrifold, Pause, Play, Question, WarningCircle, X,
+  Flag, FlagBanner, Gauge, Hammer, HardHat, Hourglass, List, MapTrifold, Pause, Play, Question, SpeakerHigh, SpeakerSlash, WarningCircle, X,
 } from '@phosphor-icons/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -13,6 +13,8 @@ import type { RenderStats } from './CourtyardScene'
 import { DATAMAP_ROWS, cityCounts, formatAge, overflowLabel, truthCard, urgencySort } from './datamap'
 import { cityAttentionQueue, cityStatusLabel } from './scenarioBridge'
 import { PROVIDER_LABEL } from './scenario'
+import { CitySound, diffSoundEvents } from './citySound.ts'
+import type { SoundAgentSnapshot } from './citySound.ts'
 
 // Thin dark command shell over a full-bleed canvas. It owns no scene state: counts,
 // district navigator, roster and inspector all read the same CityAgent snapshot.
@@ -50,7 +52,7 @@ function statusKey(agent: CityAgent) {
   return agent.workState
 }
 
-function Legend() {
+function Legend({ active, needsYou }: { active: number; needsYou: number }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="proto-legend">
@@ -73,6 +75,14 @@ function Legend() {
                 <dd>{row.rule} <span>Degrades: {row.degrades}</span></dd>
               </div>
             ))}
+            <div>
+              <dt>Sky glow</dt>
+              <dd>Sky glow = {active} active (fresh). <span>Aggregate only; eased over 1.5 s.</span></dd>
+            </div>
+            <div>
+              <dt>Gold rim</dt>
+              <dd>Gold rim = someone needs you{needsYou > 0 ? ` (${needsYou} now)` : ''}. <span>The amber beam stays ground truth.</span></dd>
+            </div>
           </dl>
           <p className="proto-legend-foot">Glow = N active (fresh). The amber beam is ground truth for needs-you.</p>
           <button type="button" className="proto-legend-close" onClick={() => setOpen(false)}>Close</button>
@@ -329,6 +339,62 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
   const queue = useMemo(() => cityAttentionQueue(agents), [agents])
   const selected = agents.find((agent) => agent.id === selectedId)
   const [districtsOpen, setDistrictsOpen] = useState(false)
+  // Opt-in sound: default off, lazy engine init on the enabling gesture.
+  const [soundOn, setSoundOn] = useState(false)
+  const soundRef = useRef<CitySound | null>(null)
+  const prevSoundRef = useRef<SoundAgentSnapshot[] | null>(null)
+  const needsYouRef = useRef(onNeedsYou)
+  needsYouRef.current = onNeedsYou
+
+  function ensureSound(): CitySound {
+    if (!soundRef.current) soundRef.current = new CitySound()
+    return soundRef.current
+  }
+  function toggleSound(): void {
+    const next = !soundOn
+    setSoundOn(next)
+    ensureSound().setEnabled(next)
+  }
+  useEffect(() => () => { soundRef.current?.dispose(); soundRef.current = null }, [])
+
+  // Cues derived from the agents passed to the HUD: diff by id + lastSignalAt.
+  // The first snapshot only seeds prev (no burst); later diffs cue when on.
+  useEffect(() => {
+    const next: SoundAgentSnapshot[] = agents.map((agent) => ({
+      id: agent.id,
+      workState: agent.workState,
+      freshness: agent.freshness,
+      lastSignalAt: agent.lastSignalAt,
+      toolKind: agent.toolKind,
+    }))
+    const prev = prevSoundRef.current
+    prevSoundRef.current = next
+    if (!prev || !soundOn) return
+    const events = diffSoundEvents(prev, next)
+    const engine = soundRef.current
+    if (!engine) return
+    if (events.needs.length > 0) engine.cue('needs')
+    else if (events.ships.length > 0) engine.cue('ship')
+    else if (events.arrivals.length > 0) engine.cue('arrive')
+  }, [agents, soundOn])
+
+  // Keys: M toggles sound, N jumps to the next needs-you worker.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.key === 'm' || event.key === 'M') {
+        event.preventDefault()
+        toggleSound()
+      } else if (event.key === 'n' || event.key === 'N') {
+        event.preventDefault()
+        needsYouRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [soundOn])
 
   const currentDistrict = view.scale === 'district' ? view.districtId : undefined
   const selectedAgent = agents.find((agent) => agent.id === (view.scale === 'agent' ? view.agentId : undefined))
@@ -405,7 +471,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           </ol>
         )}
 
-        <Legend />
+        <Legend active={counts.working} needsYou={counts.needsYou} />
 
         <div className="proto-controls" role="group" aria-label={isLive ? 'View controls' : 'View and scenario controls'}>
           <button type="button" className={view.scale === 'city' ? 'is-active' : ''} onClick={onCity} aria-pressed={view.scale === 'city'}>
@@ -416,6 +482,9 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
           </button>
           <button type="button" className={playing ? 'is-active' : ''} onClick={onTogglePlay} aria-pressed={playing}>
             {playing ? <Pause size={13} weight="fill" /> : <Play size={13} weight="fill" />}{playing ? 'Pause' : 'Play'}
+          </button>
+          <button type="button" className={soundOn ? 'is-active' : ''} onClick={toggleSound} aria-pressed={soundOn} title="Toggle ambient sound (M)">
+            {soundOn ? <SpeakerHigh size={13} weight="bold" /> : <SpeakerSlash size={13} weight="bold" />}{soundOn ? 'Sound on' : 'Sound off'}
           </button>
           {!isLive && (<button type="button" onClick={onStep} disabled={finished}>Step <ArrowRight size={12} weight="bold" /></button>)}
           {!isLive && (<button type="button" onClick={onReplay}><ArrowCounterClockwise size={13} weight="bold" /> Replay</button>)}
@@ -453,7 +522,7 @@ export function CourtyardHud({ agents, lastEvent, playing, finished, view, selec
         )}
 
         <p className="proto-event"><span>{isLive ? 'Live' : 'Scenario'}</span>{lastEvent}</p>
-        <p className="proto-hint">City shows all districts. Pick a district or a figure; Escape steps back one level.</p>
+        <p className="proto-hint">City shows all districts. Pick a district or a figure; Escape steps back one level. M sound · N next needs-you.</p>
       </div>
 
       {selected && (

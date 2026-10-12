@@ -432,6 +432,30 @@
 .proto-needs-wait { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
 .proto-overflow { align-self: center; color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
 
+/* --- Attention wedges (Lane 2C, inside-Canvas fullscreen Html) ---------------- */
+
+.proto-wedges { position: absolute; inset: 0; pointer-events: none; }
+.proto-wedge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  color: #16120a;
+  background: rgba(217, 176, 90, .94);
+  border: 1px solid var(--proto-gold);
+  border-radius: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.proto-wedge:hover { filter: brightness(1.08); }
+.proto-wedge-arrow { display: inline-block; font-size: 12px; line-height: 1; }
+.proto-wedge-label { letter-spacing: .02em; }
+
 /* --- Focus visibility and reduced motion -------------------------------- */
 
 .proto-hud button:focus-visible,
