@@ -6,6 +6,9 @@ import { CourtyardScene } from './components/prototype/CourtyardScene'
 import type { RenderStats } from './components/prototype/CourtyardScene'
 import { preferredDistrict } from './components/prototype/agentModel'
 import * as city from './components/prototype/city'
+import { cityCounts } from './components/prototype/datamap'
+import { PROVIDER_PALETTE } from './components/prototype/heraldry'
+import { majorityProvider, newShipEvents } from './components/prototype/vehicles'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
@@ -95,7 +98,22 @@ function PrototypeApp() {
     }
     return map
   }, [state, isLive])
-  const shipCount = isLive ? 0 : state.ships.length
+  // Single truth definition: lit tram cars read cityCounts.working; the tint
+  // follows the majority provider among fresh workers.
+  const counts = useMemo(() => cityCounts(agents), [agents])
+  const tramTint = PROVIDER_PALETTE[majorityProvider(agents)] ?? '#ff9b47'
+  // Live ships: one departure per fresh ship-tool transition keyed by
+  // id + lastSignalAt; re-delivered snapshots never double-fire.
+  const seenShipKeys = useRef<Set<string>>(new Set())
+  const [liveShipTotal, setLiveShipTotal] = useState(0)
+  useEffect(() => {
+    if (!isLive) return
+    const fresh = newShipEvents(seenShipKeys.current, agents)
+    if (fresh.length === 0) return
+    for (const key of fresh) seenShipKeys.current.add(key)
+    setLiveShipTotal((total) => total + fresh.length)
+  }, [agents, isLive])
+  const shipCount = isLive ? liveShipTotal : state.ships.length
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -201,6 +219,8 @@ function PrototypeApp() {
             agents={agents}
             celebrationBy={celebrationBy}
             shipCount={shipCount}
+            workingCount={counts.working}
+            tramTint={tramTint}
             selectedId={selectedId}
             view={view}
             focusRevision={focusRevision}

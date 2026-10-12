@@ -9,8 +9,13 @@ import { preferredDistrict } from './agentModel'
 import type { CityAgent } from './agentModel'
 import * as city from './city'
 import type { DistrictId, StationId } from './city'
+import { urgencySort } from './datamap'
 import { paintFacadeColorMap, paintFacadeEmissiveMap } from './facadeTexture'
 import type { FacadeCanvas } from './facadeTexture'
+import { PROVIDER_PALETTE } from './heraldry'
+import { hasFreshPresence, selectCourierHandoff, TRAM_TOTAL } from './vehicles'
+import { createJadeWaterMaterial, STILL_TIME } from './waterMaterial'
+import { WaterGlitter } from './WaterGlitter'
 
 // ---------------------------------------------------------------------------
 // Mythic City. (File name is retained from the earlier courtyard prototype; the
@@ -231,17 +236,23 @@ function Streets() {
   return <group>{render(plain, '#1b2028')}{render(lit, '#262d38')}</group>
 }
 
-function Waterworks() {
+function Waterworks({ beamXZ, beamOn, animate }: { beamXZ: [number, number] | null; beamOn: boolean; animate: boolean }) {
+  const time = useDrivenTime(animate)
+  const material = useMemo(() => createJadeWaterMaterial(), [])
+  useEffect(() => () => material.dispose(), [material])
+  useFrame(() => {
+    material.uniforms.uTime.value = animate ? time.current : STILL_TIME
+    if (beamXZ) material.uniforms.uBeamXZ.value.set(beamXZ[0], beamXZ[1])
+    material.uniforms.uBeamStrength.value = beamOn ? 1 : 0
+  })
   return (
     <group>
-      <mesh position={[city.HARBOR.x, 0.14, city.HARBOR.z]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[city.HARBOR.w, city.HARBOR.d]} />
-        <meshStandardMaterial color="#123a45" roughness={0.25} metalness={0.35} emissive="#0a2730" emissiveIntensity={0.6} />
+      <mesh position={[city.HARBOR.x, 0.14, city.HARBOR.z]} rotation={[-Math.PI / 2, 0, 0]} material={material}>
+        <planeGeometry args={[city.HARBOR.w, city.HARBOR.d, 24, 24]} />
       </mesh>
       {city.CANAL_SEGMENTS.map((segment, index) => (
-        <mesh key={index} position={[segment.x, 0.16, segment.z]} rotation={[0, segment.rot, 0]} receiveShadow>
-          <boxGeometry args={[city.CANAL_WIDTH, 0.18, segment.len + 1.5]} />
-          <meshStandardMaterial color="#123a45" roughness={0.25} metalness={0.35} emissive="#0a2730" emissiveIntensity={0.6} />
+        <mesh key={index} position={[segment.x, 0.16, segment.z]} rotation={[-Math.PI / 2, 0, segment.rot]} material={material}>
+          <planeGeometry args={[city.CANAL_WIDTH, segment.len + 1.5, 4, 16]} />
         </mesh>
       ))}
       {/* Quay walls along the harbor edges. */}
@@ -477,24 +488,39 @@ function Gateway() {
 
 // --- Transit and street life -------------------------------------------------
 
-function Rail({ animate }: { animate: boolean }) {
+function Rail({ animate, litCount, tint }: { animate: boolean; litCount: number; tint: string }) {
   const time = useDrivenTime(animate)
   const tram = useRef<THREE.InstancedMesh>(null)
   const dummy = useMemo(() => new THREE.Object3D(), [])
+  const scratch = useMemo(() => new THREE.Color(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
   const curve = useMemo(() => new THREE.CatmullRomCurve3(city.RAIL_POINTS.map(([x, y, z]) => new THREE.Vector3(x, y, z)), true, 'centripetal'), [])
   const geometry = useMemo(() => new THREE.TubeGeometry(curve, 240, 0.22, 6, true), [curve])
   useEffect(() => () => geometry.dispose(), [geometry])
-  const length = useMemo(() => curve.getLength(), [curve])
+  const lit = Math.min(TRAM_TOTAL, Math.max(1, Math.floor(litCount)))
+  useEffect(() => {
+    const node = tram.current
+    if (!node) return
+    for (let car = 0; car < TRAM_TOTAL; car += 1) {
+      scratch.set(car < lit ? tint : '#232a33')
+      node.setColorAt(car, scratch)
+    }
+    if (node.instanceColor) node.instanceColor.needsUpdate = true
+  }, [lit, tint, scratch])
   useFrame(() => {
     const node = tram.current
     if (!node) return
-    for (let car = 0; car < 3; car += 1) {
-      const s = (((time.current / 35 - car * 6 / length) % 1) + 1) % 1
-      curve.getPointAt(s, dummy.position)
-      curve.getTangentAt(s, tangent)
-      dummy.position.y += 0.5
-      dummy.quaternion.setFromUnitVectors(FORWARD, tangent)
+    for (let car = 0; car < TRAM_TOTAL; car += 1) {
+      if (car < lit) {
+        const s = (((time.current / 35 - car / lit) % 1) + 1) % 1
+        curve.getPointAt(s, dummy.position)
+        curve.getTangentAt(s, tangent)
+        dummy.position.y += 0.5
+        dummy.quaternion.setFromUnitVectors(FORWARD, tangent)
+      } else {
+        dummy.position.set(52 + (car - lit) * 2.4, 7.5, 24)
+        dummy.quaternion.identity()
+      }
       dummy.scale.set(1, 1, 1)
       dummy.updateMatrix()
       node.setMatrixAt(car, dummy.matrix)
@@ -511,26 +537,33 @@ function Rail({ animate }: { animate: boolean }) {
         <meshStandardMaterial color="#2a2f36" roughness={0.9} />
         {city.RAIL_PILLARS.map((pillar, index) => <Instance key={index} position={[pillar.x, 3.5, pillar.z]} />)}
       </Instances>
-      <instancedMesh ref={tram} args={[undefined, undefined, 3]} castShadow>
+      <instancedMesh ref={tram} args={[undefined, undefined, TRAM_TOTAL]} castShadow>
         <boxGeometry args={[1.7, 1.7, 5.6]} />
-        <meshStandardMaterial color="#33465a" emissive="#7fd0ff" emissiveIntensity={0.5} roughness={0.5} />
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
       </instancedMesh>
     </group>
   )
 }
 
-function Boats({ animate }: { animate: boolean }) {
+function Boats({ animate, sailPort, sailArchive }: { animate: boolean; sailPort: boolean; sailArchive: boolean }) {
   const time = useDrivenTime(animate)
   const refs = useRef<Array<THREE.Group | null>>([])
   const curves = useMemo(() => city.BOAT_ROUTES.map((route) => new THREE.CatmullRomCurve3(
     route.points.map(([x, z]) => new THREE.Vector3(x, 0.3, z)), false, 'centripetal',
   )), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
+  const sails = [sailPort, sailArchive, true]
   useFrame(() => {
     curves.forEach((curve, index) => {
       const node = refs.current[index]
       if (!node) return
       const route = city.BOAT_ROUTES[index]
+      if (!sails[index] || !animate) {
+        const [mx, mz] = route.points[0]
+        node.position.set(mx, 0.3, mz)
+        node.rotation.set(0, Math.PI / 2, 0)
+        return
+      }
       const raw = ((time.current / route.period + route.phase) % 1 + 1) % 1
       // Bounded ping-pong on every open route, with the heading flipped on the return leg.
       const s = raw < 0.5 ? raw * 2 : 2 - raw * 2
@@ -538,7 +571,8 @@ function Boats({ animate }: { animate: boolean }) {
       const heading = raw < 0.5 ? 1 : -1
       curve.getPointAt(clamped, node.position)
       curve.getTangentAt(clamped, tangent)
-      node.rotation.y = Math.atan2(tangent.x * heading, tangent.z * heading)
+      node.position.y = 0.3 + Math.sin(time.current * 0.9 + index * 2.1) * 0.08
+      node.rotation.set(Math.sin(time.current * 0.7 + index) * 0.03, Math.atan2(tangent.x * heading, tangent.z * heading), 0)
     })
   })
   return (
@@ -559,15 +593,19 @@ function Boats({ animate }: { animate: boolean }) {
   )
 }
 
-// A one-shot boat departs the Port quay on a ship event: it sails out of the harbor,
-// fades, and a fresh boat waits docked for the next event.
+// A one-shot freighter departs the Port quay on a ship event: it sails out of
+// the harbor behind the pier tip, then fades past the mouth. A fresh hull waits
+// docked for the next event.
 const SHIP_DOCK: [number, number] = [-54, 44]
+const SHIP_VIA: [number, number] = [-64, 46]
 const SHIP_EXIT: [number, number] = [-69, 58]
 const SHIP_SAIL_SECONDS = 9
 
-function ShipBoat({ shipCount, animate }: { shipCount: number; animate: boolean }) {
+function ShipBoat({ shipCount, animate, tint }: { shipCount: number; animate: boolean; tint: string }) {
   const time = useDrivenTime(animate)
   const group = useRef<THREE.Group>(null)
+  const wake = useRef<THREE.Mesh>(null)
+  const lamp = useRef<THREE.PointLight>(null)
   const mats = useRef<THREE.Material[] | null>(null)
   const queue = useRef(0)
   const lastSeen = useRef(shipCount)
@@ -598,6 +636,8 @@ function ShipBoat({ shipCount, animate }: { shipCount: number; animate: boolean 
       node.rotation.y = Math.PI / 2
       for (const material of mats.current) material.opacity = 1
       sailing.current = false
+      if (wake.current) wake.current.visible = false
+      if (lamp.current) lamp.current.intensity = 3
       return
     }
     if (!sailing.current) {
@@ -610,6 +650,8 @@ function ShipBoat({ shipCount, animate }: { shipCount: number; animate: boolean 
         node.position.set(SHIP_DOCK[0], 0.3, SHIP_DOCK[1])
         node.rotation.y = Math.PI / 2
         for (const material of mats.current) material.opacity = 1
+        if (wake.current) wake.current.visible = false
+        if (lamp.current) lamp.current.intensity = 3
         return
       }
     }
@@ -620,59 +662,107 @@ function ShipBoat({ shipCount, animate }: { shipCount: number; animate: boolean 
       return
     }
     node.visible = true
-    node.position.set(
-      SHIP_DOCK[0] + (SHIP_EXIT[0] - SHIP_DOCK[0]) * progress,
-      0.3,
-      SHIP_DOCK[1] + (SHIP_EXIT[1] - SHIP_DOCK[1]) * progress,
-    )
-    node.rotation.y = Math.atan2(SHIP_EXIT[0] - SHIP_DOCK[0], SHIP_EXIT[1] - SHIP_DOCK[1])
-    const fade = progress > 0.75 ? 1 - (progress - 0.75) / 0.25 : 1
+    const first = Math.min(1, progress * 2)
+    const second = Math.max(0, progress * 2 - 1)
+    const mx = SHIP_DOCK[0] + (SHIP_VIA[0] - SHIP_DOCK[0]) * first + (SHIP_EXIT[0] - SHIP_VIA[0]) * second
+    const mz = SHIP_DOCK[1] + (SHIP_VIA[1] - SHIP_DOCK[1]) * first + (SHIP_EXIT[1] - SHIP_VIA[1]) * second
+    const hx = second > 0 ? SHIP_EXIT[0] - SHIP_VIA[0] : SHIP_VIA[0] - SHIP_DOCK[0]
+    const hz = second > 0 ? SHIP_EXIT[1] - SHIP_VIA[1] : SHIP_VIA[1] - SHIP_DOCK[1]
+    node.position.set(mx, 0.3 + Math.sin(time.current * 0.9) * 0.06, mz)
+    node.rotation.y = Math.atan2(hx, hz)
+    const fade = progress > 0.6 ? 1 - (progress - 0.6) / 0.4 : 1
     for (const material of mats.current) material.opacity = fade
+    if (wake.current) {
+      const wakeMat = wake.current.material as THREE.MeshBasicMaterial
+      wakeMat.opacity = 0.45 * Math.min(1, progress * 4) * fade
+      wake.current.visible = true
+    }
+    if (lamp.current) lamp.current.intensity = 6 + 4 * Math.sin(time.current * 6)
   })
 
   return (
     <group ref={group} position={[SHIP_DOCK[0], 0.3, SHIP_DOCK[1]]}>
-      <mesh position={[0, 0.2, 0]} castShadow>
-        <boxGeometry args={[2.2, 0.9, 5]} />
-        <meshStandardMaterial color="#5a4a38" roughness={0.85} />
+      <mesh position={[0, 0.3, 0]} castShadow>
+        <boxGeometry args={[3.0, 1.2, 7]} />
+        <meshStandardMaterial color="#4a3b2c" roughness={0.85} />
       </mesh>
-      <mesh position={[0, 0.95, -0.7]}>
-        <boxGeometry args={[1.4, 1, 2]} />
-        <meshStandardMaterial color="#33465a" emissive="#ffbf6a" emissiveIntensity={0.5} roughness={0.6} />
+      {[-2, 0, 2].map((z) => (
+        <mesh key={z} position={[0, 1.25, z]}>
+          <boxGeometry args={[2.2, 1.0, 1.6]} />
+          <meshStandardMaterial color={tint} emissive={tint} emissiveIntensity={0.55} roughness={0.6} />
+        </mesh>
+      ))}
+      <mesh position={[0, 3.2, -2.6]}>
+        <cylinderGeometry args={[0.08, 0.1, 3.4, 6]} />
+        <meshStandardMaterial color="#3a4048" roughness={0.8} />
+      </mesh>
+      <mesh position={[0, 5.0, -2.6]}>
+        <sphereGeometry args={[0.22, 8, 6]} />
+        <meshStandardMaterial color="#fff2cf" emissive="#fff2cf" emissiveIntensity={1.2} />
+      </mesh>
+      <pointLight ref={lamp} position={[0, 5.2, -2.6]} color="#ffe9b0" intensity={3} distance={10} decay={2} />
+      <mesh ref={wake} position={[0, -0.05, 5.5]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
+        <planeGeometry args={[2.6, 8]} />
+        <meshBasicMaterial color="#bfe3dd" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
     </group>
   )
 }
 
-function Couriers({ animate }: { animate: boolean }) {
+export interface CourierLeg {
+  from: [number, number]
+  to: [number, number]
+  key: string
+}
+
+const COURIER_COUNT = 8
+const COURIER_LEG_SECONDS = 8
+
+function Couriers({ animate, leg }: { animate: boolean; leg: CourierLeg | null }) {
   const time = useDrivenTime(animate)
   const mesh = useRef<THREE.InstancedMesh>(null)
   const dummy = useMemo(() => new THREE.Object3D(), [])
+  const scratch = useMemo(() => new THREE.Color(), [])
+  const parked = useMemo((): [number, number][] => {
+    const spots: [number, number][] = []
+    for (let i = 0; i < COURIER_COUNT; i += 1) {
+      const route = city.COURIER_ROUTES[i % city.COURIER_ROUTES.length]
+      const [px, pz] = route.points[i % 2]
+      spots.push([px + (i % 3) * 1.2, pz + Math.floor(i / 3) * 1.2])
+    }
+    return spots
+  }, [])
+  const run = useRef({ key: '', start: 0 })
   useFrame(() => {
     const node = mesh.current
     if (!node) return
-    let index = 0
-    city.COURIER_ROUTES.forEach((route) => {
-      for (let k = 0; k < 2; k += 1) {
-        const raw = ((time.current / route.period + route.phase + k * 0.5) % 1 + 1) % 1
-        const ping = raw < 0.5 ? raw * 2 : 2 - raw * 2
-        const heading = raw < 0.5 ? 1 : -1
-        const [ax, az] = route.points[0]
-        const [bx, bz] = route.points[1]
-        dummy.position.set(ax + (bx - ax) * ping, 0.9, az + (bz - az) * ping)
-        dummy.rotation.set(0, Math.atan2((bx - ax) * heading, (bz - az) * heading), 0)
-        dummy.scale.set(1, 1, 1)
-        dummy.updateMatrix()
-        node.setMatrixAt(index, dummy.matrix)
-        index += 1
+    const active = animate && leg !== null
+    if (leg && leg.key !== run.current.key) run.current = { key: leg.key, start: time.current }
+    const progress = leg ? (time.current - run.current.start) / COURIER_LEG_SECONDS : 1
+    const running = active && leg && run.current.key === leg.key && progress < 1
+    for (let i = 0; i < COURIER_COUNT; i += 1) {
+      if (i === 0 && running && leg) {
+        const t = Math.min(1, Math.max(0, progress))
+        dummy.position.set(leg.from[0] + (leg.to[0] - leg.from[0]) * t, 0.9, leg.from[1] + (leg.to[1] - leg.from[1]) * t)
+        dummy.rotation.set(0, Math.atan2(leg.to[0] - leg.from[0], leg.to[1] - leg.from[1]), 0)
+        scratch.set('#ff9b47')
+      } else {
+        dummy.position.set(parked[i][0], 0.9, parked[i][1])
+        dummy.rotation.set(0, (i * 0.7) % Math.PI, 0)
+        scratch.set('#2a2f36')
       }
-    })
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      node.setMatrixAt(i, dummy.matrix)
+      node.setColorAt(i, scratch)
+    }
     node.instanceMatrix.needsUpdate = true
+    if (node.instanceColor) node.instanceColor.needsUpdate = true
   })
   return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, city.COURIER_ROUTES.length * 2]}>
+    <instancedMesh ref={mesh} args={[undefined, undefined, COURIER_COUNT]}>
       <boxGeometry args={[0.7, 0.7, 1.3]} />
-      <meshStandardMaterial color="#6b5334" emissive="#3a2a14" emissiveIntensity={0.22} roughness={0.75} metalness={0.2} />
+      <meshBasicMaterial color="#ffffff" toneMapped={false} />
     </instancedMesh>
   )
 }
@@ -1248,10 +1338,12 @@ function DistrictLabel({ district, assigned, active, onDistrict }: { district: c
 
 const STATION_FACING = 0.5
 
-function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, onSelect, onDistrict, onReady }: {
+function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTint, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, onSelect, onDistrict, onReady }: {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
   shipCount: number
+  workingCount?: number
+  tramTint?: string
   selectedId?: string
   view: city.View
   focusRevision: number
@@ -1294,6 +1386,33 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
     return map
   }, [agents])
 
+  const beamAgent = useMemo(() => urgencySort(agents).find(
+    (agent) => agent.freshness === 'fresh' && agent.workState === 'needs-input',
+  ), [agents])
+  const beamXZ: [number, number] | null = beamAgent && agentPositions[beamAgent.id]
+    ? [agentPositions[beamAgent.id][0], agentPositions[beamAgent.id][2]]
+    : null
+  const beamOn = beamXZ !== null
+
+  const handoff = useMemo(() => selectCourierHandoff(agents), [agents])
+  const courierLeg: CourierLeg | null = useMemo(() => {
+    if (!handoff) return null
+    const from = agentPositions[handoff.parentId]
+    const to = agentPositions[handoff.childId]
+    if (!from || !to) return null
+    return { from: [from[0], from[2]], to: [to[0], to[2]], key: handoff.key }
+  }, [handoff, agentPositions])
+
+  const sailPort = useMemo(() => hasFreshPresence(agents, 'port'), [agents])
+  const sailArchive = useMemo(() => hasFreshPresence(agents, 'archive'), [agents])
+
+  const shipTint = useMemo(() => {
+    const sailing = agents.find((agent) => agent.freshness === 'fresh' && agent.toolKind === 'ship')
+    return sailing ? (PROVIDER_PALETTE[sailing.provider] ?? '#ffbf6a') : '#ffbf6a'
+  }, [agents])
+
+  const litCount = workingCount ?? 1
+
   useEffect(() => {
     onReady()
   }, [onReady])
@@ -1332,7 +1451,8 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
 
       <Streets />
       <Plazas />
-      <Waterworks />
+      <Waterworks beamXZ={beamXZ} beamOn={beamOn} animate={animate} />
+      <WaterGlitter counts={glowCounts} beamXZ={beamXZ} beamOn={beamOn} animate={animate} />
       <Buildings />
       <DistrictWindows counts={glowCounts} frozen={paused} reducedMotion={reducedMotion} />
       <Lamps />
@@ -1343,10 +1463,10 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, selectedId, view, fo
       <Observatory animate={animate} />
       <Gateway />
 
-      <Rail animate={animate} />
-      <Boats animate={animate} />
-      <ShipBoat shipCount={shipCount} animate={animate} />
-      <Couriers animate={animate} />
+      <Rail animate={animate} litCount={litCount} tint={tramTint ?? '#ff9b47'} />
+      <Boats animate={animate} sailPort={sailPort} sailArchive={sailArchive} />
+      <ShipBoat shipCount={shipCount} animate={animate} tint={shipTint} />
+      <Couriers animate={animate} leg={courierLeg} />
       <Steam animate={animate} />
 
       {(['forge', 'planning-table', 'signal-post'] as StationId[]).map((id) => (
@@ -1395,6 +1515,8 @@ export interface CourtyardSceneProps {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
   shipCount: number
+  workingCount?: number
+  tramTint?: string
   selectedId?: string
   view: city.View
   focusRevision: number
