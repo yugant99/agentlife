@@ -3,18 +3,23 @@ import assert from 'node:assert/strict'
 
 import { DOMINANCE_WINDOW_MS, DWELL_MIN_MS, MAX_RENDERED_WORKERS, TRIP_MAX_MS, TRIP_MIN_MS } from './agentModel.ts'
 import {
+  OVERFLOW_RING_R,
   assignDistrictSlots,
+  assignOverflowSlots,
   canLeaveSpot,
   childOffset,
   dominantToolKind,
   gestureForWorker,
   layoutTargets,
+  overflowSlotPosition,
+  overflowTargets,
   renderPriority,
   RIBBON_MAX_POINTS,
   ribbonPointsFromRoute,
   ringFor,
   selectRendered,
   slotPosition,
+  SLOT_RING_R,
   targetDistrict,
   tripDurationMs,
   tripSpeed,
@@ -208,4 +213,50 @@ test('ribbon points follow the remaining route and cap at a short hint', () => {
   assert.deepEqual(reused, [[5, 5], [6, 6]])
   assert.deepEqual(ribbonPointsFromRoute([0, 0], [[1, 1]], 0), [])
   assert.deepEqual(ribbonPointsFromRoute([0, 0], [[1, 1]], 1), [[0, 0]])
+})
+
+test('overflow ring sits outside the work ring at the plaza edge', () => {
+  assert.ok(OVERFLOW_RING_R > SLOT_RING_R)
+  const center = [0, 20]
+  const inner = slotPosition(center, 0, 1)
+  const outer = overflowSlotPosition(center, 0, 1)
+  const innerR = Math.hypot(inner[0] - center[0], inner[1] - center[1])
+  const outerR = Math.hypot(outer[0] - center[0], outer[1] - center[1])
+  assert.ok(Math.abs(innerR - SLOT_RING_R) < 1e-9)
+  assert.ok(Math.abs(outerR - OVERFLOW_RING_R) < 1e-9)
+  assert.ok(outerR - innerR > 2)
+  const a = overflowSlotPosition(center, 0, 6)
+  const b = overflowSlotPosition(center, 1, 6)
+  assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) > 2, 'overflow slots overlap')
+  assert.deepEqual(a, overflowSlotPosition(center, 0, 6))
+})
+
+test('overflow slots group by district in id order', () => {
+  const agents = [
+    cityAgent({ id: 'codex:b', toolKind: 'shell' }),
+    cityAgent({ id: 'codex:a', toolKind: 'shell' }),
+    cityAgent({ id: 'codex:c', toolKind: 'read' }),
+  ]
+  const slots = assignOverflowSlots(agents)
+  assert.equal(slots.get('codex:a')?.slot, 0)
+  assert.equal(slots.get('codex:b')?.slot, 1)
+  assert.equal(slots.get('codex:a')?.total, 2)
+  assert.equal(slots.get('codex:c')?.district, 'archive')
+  assert.equal(slots.get('codex:a')?.district, 'foundry')
+})
+
+test('overflow targets land on the outer ring per district', () => {
+  const agents = [
+    cityAgent({ id: 'codex:a', toolKind: 'shell' }),
+    cityAgent({ id: 'codex:b', toolKind: 'shell' }),
+  ]
+  const targets = overflowTargets(agents, CENTERS)
+  for (const [id, target] of targets) {
+    const center = CENTERS[target.district]
+    const radius = Math.hypot(target.x - center[0], target.z - center[1])
+    assert.ok(Math.abs(radius - OVERFLOW_RING_R) < 1e-9, `${id} not on the outer ring`)
+  }
+  assert.equal(targets.get('codex:a')?.district, 'foundry')
+  // Deterministic across calls.
+  assert.deepEqual([...overflowTargets(agents, CENTERS).keys()], [...targets.keys()])
 })

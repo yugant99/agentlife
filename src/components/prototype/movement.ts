@@ -193,6 +193,73 @@ export function layoutTargets<T extends LayoutAgent>(
   return out
 }
 
+// --- Overflow second ring (Wave 3 Lane 3B) ---------------------------------------
+// Beyond MAX_RENDERED_WORKERS the overflow never overlaps the work ring: stale
+// overflow sits on a second ring at the plaza edge. Pure slot order only; the
+// scene renders sitters there without per-agent tags. Outer slots group by
+// target district in id order, the same rule as the inner ring.
+
+/** Outer-ring radius at the plaza edge; the inner work ring is SLOT_RING_R. */
+export const OVERFLOW_RING_R = SLOT_RING_R + 2.8
+
+/**
+ * A slot on the overflow ring. Same angle rule as slotPosition, wider radius
+ * so sitters read as a second ring, never overlapping the inner workers.
+ */
+export function overflowSlotPosition(
+  center: readonly [number, number],
+  index: number,
+  total: number,
+): [number, number] {
+  const n = Math.max(1, total)
+  const radius = OVERFLOW_RING_R + 0.4 * Math.max(0, n - 8)
+  const angle = (index / n) * Math.PI * 2 + 0.5
+  return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius]
+}
+
+/**
+ * Deterministic outer-ring slots for overflow agents: grouped by target
+ * district in id order. Children sit on the outer ring by their own target
+ * (no tethers out there) so the order stays pure and testable.
+ */
+export function assignOverflowSlots<T extends SlotAgent>(overflow: T[]): Map<string, SlotAssignment> {
+  const grouped = new Map<DistrictId, T[]>()
+  for (const agent of overflow) {
+    const district = targetDistrict(agent, agent.toolKind)
+    const list = grouped.get(district) ?? []
+    list.push(agent)
+    grouped.set(district, list)
+  }
+  const out = new Map<string, SlotAssignment>()
+  for (const list of grouped.values()) {
+    list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    list.forEach((agent, slot) => {
+      const district = targetDistrict(agent, agent.toolKind)
+      out.set(agent.id, { district, slot, total: list.length })
+    })
+  }
+  return out
+}
+
+/**
+ * World-space targets for overflow sitters: roots and children alike on the
+ * outer ring of their target district. Pure; the scene renders them static.
+ */
+export function overflowTargets<T extends LayoutAgent>(
+  overflow: T[],
+  centers: Record<DistrictId, readonly [number, number]>,
+): Map<string, { district: DistrictId; x: number; z: number }> {
+  const slots = assignOverflowSlots(overflow)
+  const out = new Map<string, { district: DistrictId; x: number; z: number }>()
+  for (const agent of overflow) {
+    const assignment = slots.get(agent.id)
+    if (!assignment) continue
+    const [x, z] = overflowSlotPosition(centers[assignment.district], assignment.slot, assignment.total)
+    out.set(agent.id, { district: assignment.district, x, z })
+  }
+  return out
+}
+
 // --- Render cap -------------------------------------------------------------------
 
 /** Priority rank: needs-input, then fresh, then stale. Historical never renders. */
