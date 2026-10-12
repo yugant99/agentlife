@@ -5,6 +5,8 @@
 // clocks, telemetry and network.
 
 import type { CityAgent, CitySnapshot, WorkState } from './agentModel.ts'
+import { cityCounts as datamapCounts, urgencySort } from './datamap.ts'
+import type { CityCounts } from './datamap.ts'
 import { DWELL_MS } from './scenario.ts'
 import type { ScenarioAgent, ScenarioState } from './scenario.ts'
 
@@ -77,29 +79,16 @@ export function cityStatusLabel(agent: Pick<CityAgent, 'workState' | 'freshness'
   return cityWorkLabel(agent.workState)
 }
 
-export interface CityCounts {
-  working: number
-  needsYou: number
-  complete: number
-  total: number
-}
+export type { CityCounts } from './datamap.ts'
 
-/** Truthful roster counts over CityAgent records (historical agents count as past). */
+/** Truthful roster counts over CityAgent records. Single definition lives in datamap.ts. */
 export function cityCounts(agents: CityAgent[]): CityCounts {
-  let working = 0
-  let needsYou = 0
-  let complete = 0
-  for (const agent of agents) {
-    if (agent.freshness === 'fresh' && agent.workState === 'active') working += 1
-    if (agent.freshness === 'fresh' && agent.workState === 'needs-input') needsYou += 1
-    if (agent.freshness === 'fresh' && agent.workState === 'complete') complete += 1
-  }
-  return { working, needsYou, complete, total: agents.length }
+  return datamapCounts(agents)
 }
 
-/** Fresh agents that need a human, in stable snapshot order. */
+/** Fresh agents that need a human, urgency-sorted: longest waiter first. */
 export function cityAttentionQueue(agents: CityAgent[]): CityAgent[] {
-  return agents.filter((agent) => agent.freshness === 'fresh' && agent.workState === 'needs-input')
+  return urgencySort(agents).filter((agent) => agent.freshness === 'fresh' && agent.workState === 'needs-input')
 }
 
 /**

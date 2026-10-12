@@ -401,6 +401,37 @@
 .proto-inspector-actions { display: flex; gap: 8px; margin-top: 12px; }
 .proto-inspector-actions .proto-inspector-back { margin-top: 0; }
 
+/* --- Truth card + legend (Lane 1A truth contract) --------------------------- */
+
+.proto-truthcard { margin: 0; display: grid; gap: 8px; }
+.proto-truthcard dt { color: var(--proto-muted); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+.proto-truthcard dd { margin: 3px 0 0; font-size: 12px; line-height: 1.45; }
+.proto-inspector-status { display: inline-flex; align-items: center; gap: 5px; margin: 10px 0 0; color: var(--proto-muted); font-family: var(--proto-mono); font-size: 10px; }
+.proto-raw { margin-top: 10px; border-top: 1px solid var(--proto-border-soft); padding-top: 8px; }
+.proto-raw summary { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; cursor: pointer; }
+.proto-raw dl { margin: 8px 0 0; display: grid; gap: 6px; }
+.proto-raw dt { color: var(--proto-muted); font-size: 9px; letter-spacing: .14em; text-transform: uppercase; }
+.proto-raw dd { margin: 2px 0 0; font-size: 11px; }
+
+.proto-legend { width: 100%; }
+.proto-legend-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: var(--proto-text); background: var(--proto-panel); border: 1px solid var(--proto-border); border-radius: 4px; font-size: 11px; cursor: pointer; }
+.proto-legend-toggle:hover { background: rgba(255, 255, 255, .07); }
+.proto-legend-pop { margin-top: 6px; width: 100%; max-height: min(46vh, 380px); overflow-y: auto; padding: 10px 12px; background: var(--proto-panel-strong); border: 1px solid var(--proto-border); border-radius: 6px; backdrop-filter: blur(11px); }
+.proto-legend-pop p { margin: 0 0 8px; font-size: 11px; line-height: 1.45; }
+.proto-legend-pop dl { margin: 0; display: grid; gap: 7px; }
+.proto-legend-pop dt { font-size: 11px; font-weight: 600; }
+.proto-legend-pop dd { margin: 2px 0 0; color: #cdd8d2; font-size: 10px; line-height: 1.4; }
+.proto-legend-pop dd span { display: block; color: var(--proto-muted); font-size: 9px; }
+.proto-legend-foot { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
+.proto-legend-close { margin-top: 4px; padding: 4px 9px; color: var(--proto-text); background: rgba(255, 255, 255, .05); border: 1px solid var(--proto-border); border-radius: 4px; font-size: 11px; cursor: pointer; }
+
+.proto-needs-list { margin: 0; padding: 6px; width: 100%; list-style: none; display: flex; flex-direction: column; gap: 2px; background: var(--proto-panel); border: 1px solid var(--proto-border); border-radius: 6px; backdrop-filter: blur(9px); }
+.proto-needs-list button { width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 5px 8px; color: var(--proto-text); background: transparent; border: 0; border-radius: 4px; font-size: 11px; text-align: left; cursor: pointer; }
+.proto-needs-list button:hover { background: rgba(255, 255, 255, .06); }
+.proto-needs-list button.is-selected { background: rgba(217, 176, 90, .13); box-shadow: inset 2px 0 0 var(--proto-gold); }
+.proto-needs-wait { color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
+.proto-overflow { align-self: center; color: var(--proto-muted); font-family: var(--proto-mono); font-size: 9px; }
+
 /* --- Focus visibility and reduced motion -------------------------------- */
 
 .proto-hud button:focus-visible,
