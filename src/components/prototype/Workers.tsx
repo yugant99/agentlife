@@ -1,19 +1,26 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { CourtyardCharacter } from './CourtyardCharacter'
+import { CourtyardCharacter, STEP_FREQ } from './CourtyardCharacter'
 import { GATEWAY_ARCH, WALK_Y, WORK_SPOTS } from './city'
 import type { DistrictId } from './city'
 import type { CityAgent, ToolKind } from './agentModel'
-import { DWELL_MIN_MS } from './agentModel'
+import { DWELL_MIN_MS, MAX_RENDERED_WORKERS } from './agentModel'
 import { heraldryFor } from './heraldry'
 import { buildRoadGraph, pathToSpot } from './cityGraph'
 import type { RoadGraph } from './cityGraph'
 import {
   canLeaveSpot, childOffset, dominantToolKind, gestureForWorker, layoutTargets,
-  ringFor, RING_COLORS, selectRendered, targetDistrict, tripSpeed, selectLeaving,
+  RIBBON_MAX_POINTS, ribbonPointsFromRoute, ringFor, RING_COLORS, selectRendered, targetDistrict, tripSpeed, selectLeaving,
 } from './movement'
 import type { ToolSample } from './movement'
+import {
+  desaturationForAge, effectForPhase, footstepScaleAt, haloFractionForDuration,
+  MOTE_COUNT, MOTE_RADIUS, MOTE_SIZE, rateForPhase, rippleFractionAt, rippleScaleFor,
+  THEATRE_MAX, toolSigilColor,
+} from './theatre.ts'
+import { paintFootstepDisc } from './footstepTexture.ts'
+import type { FootstepCanvas } from './footstepTexture.ts'
 import { ARRIVAL_FADE_MS, arrivalOpacity, departureOpacity, DEPARTURE_FADE_MS, shouldTether } from './lifecycle'
 
 // Walking workers. A thin reconciler (discrete snapshot changes) retargets walkers
@@ -36,6 +43,24 @@ const SLOT_REPATH_DIST = 0.6
 const TAG_DISTANCE = 40
 const MAX_TAGS = 6
 const TAG_CULL_MS = 250
+// Circulation + theatre (Lane 2A): one additive instanced set each. Ribbons
+// are short flat strips along the remaining route in the exact ring colour,
+// hidden under reduced motion and pause. Pools are stride-pulsed soft discs.
+// Theatre carries motes/ripples/sigils (at most THEATRE_MAX), fresh only.
+const RIBBON_SEGMENTS = RIBBON_MAX_POINTS - 1
+const RIBBON_TOTAL = MAX_RENDERED_WORKERS * RIBBON_SEGMENTS
+const POOL_TOTAL = MAX_RENDERED_WORKERS
+const RIBBON_WIDTH = 1.2
+const RIBBON_Y = 0.12
+const POOL_Y = 0.13
+const POOL_OPACITY = 0.32
+const THEATRE_OPACITY = 0.55
+const SIGIL_SIZE = 2.4
+const HEAD_Y = WALK_Y + 3.4
+const SIGIL_Y = WALK_Y + 1.8
+const HALO_INNER = 1.38
+const HALO_OUTER = 1.55
+const HALO_COLOR = '#ffd479'
 
 const CENTERS: Record<DistrictId, readonly [number, number]> = {
   citadel: WORK_SPOTS.citadel.center,
@@ -111,6 +136,43 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
     geometry.setDrawRange(0, 0)
     tetherGeom.current = geometry
   }
+  // Lane 2A scratch: one dummy, one colour and two route tuples reused every
+  // frame, so the ribbon/pool/theatre writers never allocate and never touch
+  // React state. The theatre clock holds while reduced motion is on; pause
+  // returns from the loop early, which freezes every effect in place.
+  const ribbonRef = useRef<THREE.InstancedMesh | null>(null)
+  const poolRef = useRef<THREE.InstancedMesh | null>(null)
+  const theatreRef = useRef<THREE.InstancedMesh | null>(null)
+  const dummy = useRef<THREE.Object3D | null>(null)
+  if (!dummy.current) dummy.current = new THREE.Object3D()
+  const tmpColor = useRef<THREE.Color | null>(null)
+  if (!tmpColor.current) tmpColor.current = new THREE.Color()
+  const ribbonScratch = useRef<[number, number][]>([])
+  if (ribbonScratch.current.length === 0) {
+    for (let i = 0; i < RIBBON_MAX_POINTS; i += 1) ribbonScratch.current.push([0, 0])
+  }
+  const posScratch = useRef<[number, number]>([0, 0])
+  const theatreTime = useRef(0)
+  // Wall-clock frozen for age channels while paused or under reduced motion.
+  const stillNow = useRef(0)
+  // One flat quad shared by all three instanced sets; one soft-disc texture
+  // shared by pools and theatre. Built once, disposed on unmount.
+  const flatGeom = useMemo(() => {
+    const geometry = new THREE.PlaneGeometry(1, 1)
+    geometry.rotateX(-Math.PI / 2)
+    return geometry
+  }, [])
+  const footTexture = useMemo(() => {
+    if (typeof document === 'undefined') return null
+    const canvas = paintFootstepDisc((width, height) => {
+      const element = document.createElement('canvas')
+      element.width = width
+      element.height = height
+      return element as unknown as FootstepCanvas
+    })
+    if (!canvas) return null
+    return new THREE.CanvasTexture(canvas as unknown as HTMLCanvasElement)
+  }, [])
 
   const clock = useRef(0)
   const lastT = useRef<number | null>(null)
@@ -354,7 +416,15 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
   useEffect(() => () => {
     tetherGeom.current?.dispose()
     tetherGeom.current = null
-  }, [])
+    flatGeom.dispose()
+    footTexture?.dispose()
+  }, [flatGeom, footTexture])
+
+  // Freeze the age-channel clock when the still modes engage; the next
+  // discrete render then holds desaturation and halo instead of advancing.
+  useEffect(() => {
+    if (paused || reducedMotion) stillNow.current = Date.now()
+  }, [paused, reducedMotion])
 
   useFrame(({ clock: frameClock, camera }) => {
     const now = frameClock.elapsedTime
@@ -494,8 +564,130 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
       geometry.setDrawRange(0, pairs * 2)
       attribute.needsUpdate = true
     }
+
+    // Circulation + theatre writers (Lane 2A). Ribbons skip under reduced
+    // motion (the mesh hides via its visible flag); pools and theatre keep
+    // writing with a held clock so the still scene stays legible but frozen.
+    const dummyObj = dummy.current
+    const colorObj = tmpColor.current
+    const ribbonMesh = ribbonRef.current
+    const poolMesh = poolRef.current
+    const theatreMesh = theatreRef.current
+    if (dummyObj && colorObj && ribbonMesh && poolMesh && theatreMesh) {
+      const reducedNow = reducedRef.current
+      if (!reducedNow) theatreTime.current += dtMs / 1000
+      const tNow = theatreTime.current
+      const selectedNow = selectedRef.current
+      let ribbonUsed = 0
+      let poolUsed = 0
+      let theatreUsed = 0
+      for (const [, runtime] of runtimes.current) {
+        const agentNow = runtime.agent
+        const freshNow = !runtime.leaving && agentNow.freshness === 'fresh'
+        const ringNow = ringFor(agentNow, selectedNow === agentNow.id)
+        if (!reducedNow && freshNow && runtime.moving && runtime.route.length > 0) {
+          posScratch.current[0] = runtime.pos.x
+          posScratch.current[1] = runtime.pos.z
+          const points = ribbonPointsFromRoute(
+            posScratch.current, runtime.route, RIBBON_MAX_POINTS, ribbonScratch.current,
+          )
+          colorObj.set(RING_COLORS[ringNow])
+          for (let j = 0; j + 1 < points.length && ribbonUsed < RIBBON_TOTAL; j += 1) {
+            const dx = points[j + 1][0] - points[j][0]
+            const dz = points[j + 1][1] - points[j][1]
+            const length = Math.hypot(dx, dz)
+            if (length < 1e-4) continue
+            dummyObj.position.set(points[j][0] + dx / 2, RIBBON_Y, points[j][1] + dz / 2)
+            dummyObj.rotation.set(0, Math.atan2(dx, dz), 0)
+            dummyObj.scale.set(RIBBON_WIDTH, 1, length + 0.4)
+            dummyObj.updateMatrix()
+            ribbonMesh.setMatrixAt(ribbonUsed, dummyObj.matrix)
+            ribbonMesh.setColorAt(ribbonUsed, colorObj)
+            ribbonUsed += 1
+          }
+        }
+        if (freshNow && runtime.moving && poolUsed < POOL_TOTAL) {
+          dummyObj.position.set(runtime.pos.x, POOL_Y, runtime.pos.z)
+          dummyObj.rotation.set(0, 0, 0)
+          const swell = footstepScaleAt(tNow * STEP_FREQ + poolUsed * 1.7)
+          dummyObj.scale.set(swell, 1, swell)
+          dummyObj.updateMatrix()
+          poolMesh.setMatrixAt(poolUsed, dummyObj.matrix)
+          colorObj.set(RING_COLORS[ringNow])
+          poolMesh.setColorAt(poolUsed, colorObj)
+          poolUsed += 1
+        }
+        if (freshNow && theatreUsed < THEATRE_MAX) {
+          const effect = effectForPhase(agentNow)
+          const rate = rateForPhase(agentNow.phase)
+          if (effect === 'motes' && theatreUsed + MOTE_COUNT <= THEATRE_MAX) {
+            colorObj.set(RING_COLORS.info)
+            for (let k = 0; k < MOTE_COUNT; k += 1) {
+              // Same orbit as moteOffsetAt, inlined so the loop never allocates.
+              const angle = tNow * rate * Math.PI * 2 + (k / MOTE_COUNT) * Math.PI * 2
+              dummyObj.position.set(
+                runtime.pos.x + Math.cos(angle) * MOTE_RADIUS,
+                HEAD_Y,
+                runtime.pos.z + Math.sin(angle) * MOTE_RADIUS,
+              )
+              dummyObj.rotation.set(0, 0, 0)
+              dummyObj.scale.set(MOTE_SIZE, 1, MOTE_SIZE)
+              dummyObj.updateMatrix()
+              theatreMesh.setMatrixAt(theatreUsed, dummyObj.matrix)
+              theatreMesh.setColorAt(theatreUsed, colorObj)
+              theatreUsed += 1
+            }
+          } else if (effect === 'ripple') {
+            const fraction = rippleFractionAt(tNow, rate)
+            const size = rippleScaleFor(fraction)
+            dummyObj.position.set(runtime.pos.x, POOL_Y + 0.01, runtime.pos.z)
+            dummyObj.rotation.set(0, 0, 0)
+            dummyObj.scale.set(size, 1, size)
+            dummyObj.updateMatrix()
+            theatreMesh.setMatrixAt(theatreUsed, dummyObj.matrix)
+            colorObj.set(RING_COLORS.info).multiplyScalar(1 - fraction * 0.75)
+            theatreMesh.setColorAt(theatreUsed, colorObj)
+            theatreUsed += 1
+          } else if (effect === 'sigil') {
+            dummyObj.position.set(runtime.pos.x, SIGIL_Y, runtime.pos.z)
+            dummyObj.rotation.set(0, 0, 0)
+            dummyObj.scale.set(SIGIL_SIZE, 1, SIGIL_SIZE)
+            dummyObj.updateMatrix()
+            theatreMesh.setMatrixAt(theatreUsed, dummyObj.matrix)
+            colorObj.set(toolSigilColor(agentNow.toolKind))
+            theatreMesh.setColorAt(theatreUsed, colorObj)
+            theatreUsed += 1
+          }
+        }
+      }
+      // Park unused instances far below at zero scale so no glow sticks.
+      dummyObj.rotation.set(0, 0, 0)
+      dummyObj.scale.set(0, 0, 0)
+      dummyObj.position.set(0, -10, 0)
+      for (let i = ribbonUsed; i < RIBBON_TOTAL; i += 1) {
+        dummyObj.updateMatrix()
+        ribbonMesh.setMatrixAt(i, dummyObj.matrix)
+      }
+      for (let i = poolUsed; i < POOL_TOTAL; i += 1) {
+        dummyObj.updateMatrix()
+        poolMesh.setMatrixAt(i, dummyObj.matrix)
+      }
+      for (let i = theatreUsed; i < THEATRE_MAX; i += 1) {
+        dummyObj.updateMatrix()
+        theatreMesh.setMatrixAt(i, dummyObj.matrix)
+      }
+      ribbonMesh.instanceMatrix.needsUpdate = true
+      poolMesh.instanceMatrix.needsUpdate = true
+      theatreMesh.instanceMatrix.needsUpdate = true
+      if (ribbonMesh.instanceColor) ribbonMesh.instanceColor.needsUpdate = true
+      if (poolMesh.instanceColor) poolMesh.instanceColor.needsUpdate = true
+      if (theatreMesh.instanceColor) theatreMesh.instanceColor.needsUpdate = true
+    }
   })
 
+  // Age channels freeze in still modes: the frozen wall clock holds the last
+  // desaturation and halo instead of advancing them.
+  const nowWall = paused || reducedMotion ? stillNow.current || Date.now() : Date.now()
   const entries = [...runtimes.current.entries()]
   return (
     <group>
@@ -512,6 +704,16 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
         // the character (livery) and the culled tag set above.
         const heraldry = heraldryFor(agent)
         const showTag = visibleTags.current.has(id)
+        // Age channels: desaturation ramps with signal age while fresh (stale
+        // pins to full dim through `dimmed`); the halo arc grows with work
+        // duration, capped at 30 min and quantized so geometry rarely churns.
+        const desaturation = agent.freshness === 'fresh'
+          ? desaturationForAge(nowWall - agent.lastSignalAt)
+          : 1
+        const haloFraction = agent.freshness === 'fresh' && agent.startedAt !== undefined
+          ? haloFractionForDuration(nowWall - agent.startedAt)
+          : 0
+        const haloStep = Math.round(haloFraction * 24) / 24
         return (
           <group
             key={id}
@@ -539,6 +741,7 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
                 reducedMotion={reducedMotion}
                 selected={selectedId === id}
                 dimmed={agent.freshness !== 'fresh'}
+                desaturation={desaturation}
                 heraldry={heraldry}
                 showTag={showTag}
                 onHover={handleHover}
@@ -550,6 +753,13 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
               <ringGeometry args={[1.02, 1.28, 40]} />
               <meshBasicMaterial color={RING_COLORS[ring]} transparent opacity={0.9} depthWrite={false} />
             </mesh>
+            {/* Work-duration halo: arc grows with startedAt, capped at 30 min. */}
+            {haloStep > 0.01 && (
+              <mesh position={[0, 0.09, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[HALO_INNER, HALO_OUTER, 40, 1, 0, haloStep * Math.PI * 2]} />
+                <meshBasicMaterial color={HALO_COLOR} transparent opacity={0.8} depthWrite={false} side={THREE.DoubleSide} />
+              </mesh>
+            )}
             {/* Tall amber beam marks needs-input from the whole city view. */}
             {showBeam && (
               <mesh
@@ -577,6 +787,60 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
       <lineSegments geometry={tetherGeom.current} frustumCulled={false}>
         <lineBasicMaterial color="#9fd8ff" transparent opacity={0.7} depthWrite={false} />
       </lineSegments>
+      {/* Walk ribbons: one additive instanced set in exact ring colours. */}
+      <instancedMesh
+        ref={(node) => {
+          ribbonRef.current = node
+        }}
+        args={[undefined, undefined, RIBBON_TOTAL]}
+        frustumCulled={false}
+        visible={!paused && !reducedMotion}
+      >
+        <primitive object={flatGeom} attach="geometry" />
+        <meshBasicMaterial
+          transparent
+          opacity={0.5}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          polygonOffset
+          polygonOffsetFactor={-2}
+          polygonOffsetUnits={-2}
+        />
+      </instancedMesh>
+      {/* Footstep pools: one instanced set of stride-pulsed soft discs. */}
+      <instancedMesh
+        ref={(node) => {
+          poolRef.current = node
+        }}
+        args={[undefined, undefined, POOL_TOTAL]}
+        frustumCulled={false}
+      >
+        <primitive object={flatGeom} attach="geometry" />
+        <meshBasicMaterial
+          transparent
+          opacity={POOL_OPACITY}
+          map={footTexture ?? undefined}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </instancedMesh>
+      {/* State theatre: one additive set (at most 32), no new lights. */}
+      <instancedMesh
+        ref={(node) => {
+          theatreRef.current = node
+        }}
+        args={[undefined, undefined, THEATRE_MAX]}
+        frustumCulled={false}
+      >
+        <primitive object={flatGeom} attach="geometry" />
+        <meshBasicMaterial
+          transparent
+          opacity={THEATRE_OPACITY}
+          map={footTexture ?? undefined}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </instancedMesh>
     </group>
   )
 }

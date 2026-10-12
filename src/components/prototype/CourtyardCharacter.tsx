@@ -27,7 +27,7 @@ const DARK = '#1b1d21'
 const GREY = '#6a6f75'
 
 const CELEBRATION_SECONDS = 2.2
-const STEP_FREQ = 7
+export const STEP_FREQ = 7
 
 type HatKind = HeraldrySilhouette
 
@@ -357,6 +357,12 @@ export interface CourtyardCharacterProps {
   selected: boolean
   /** Stale agents desaturate (seated pose comes through the `sit` gesture). */
   dimmed: boolean
+  /**
+   * Wall-clock age ramp 0..1 from Workers (desaturationForAge): 0 reads full
+   * heraldry colour, 1 reads the pre-made dimmed variants. Stale figures pin
+   * to 1 through `dimmed`. Discrete renders only, never per frame.
+   */
+  desaturation?: number
   /** Heraldry kit passed through from Workers (provider/model/role/workspace). */
   heraldry: Heraldry
   /** Tag culling decision from Workers: mount the Html name tag only when true. */
@@ -366,7 +372,7 @@ export interface CourtyardCharacterProps {
   onSelect: (id: string) => void
 }
 
-export function CourtyardCharacter({ agent, gesture, moving, index, celebrationId, paused, reducedMotion, selected, dimmed, heraldry, showTag, onHover, onSelect }: CourtyardCharacterProps) {
+export function CourtyardCharacter({ agent, gesture, moving, index, celebrationId, paused, reducedMotion, selected, dimmed, desaturation, heraldry, showTag, onHover, onSelect }: CourtyardCharacterProps) {
   const body = useRef<THREE.Group>(null)
   const head = useRef<THREE.Group>(null)
   const leftLeg = useRef<THREE.Group>(null)
@@ -474,13 +480,20 @@ export function CourtyardCharacter({ agent, gesture, moving, index, celebrationI
   })
 
   // Heraldry colours: uniform + trim from the provider kit, crest from the role,
-  // pennant from the workspace basename. Stale figures read the pre-made dimmed
-  // variants (module cache above): no colour or material is created per render.
-  const coat = dimmed ? dimmedFor(heraldry.uniform) : heraldry.uniform
-  const trim = dimmed ? dimmedFor(heraldry.hue) : heraldry.hue
-  const crest = dimmed ? dimmedFor(heraldry.crest) : heraldry.crest
-  const pennant = dimmed ? dimmedFor(heraldry.pennant) : heraldry.pennant
-  const lit = heraldry.lit && !dimmed
+  // pennant from the workspace basename. The age ramp blends toward the
+  // pre-made dimmed variants (module cache above): no colour or material is
+  // created per frame, only one hex string per colour per discrete render.
+  const desat = dimmed ? 1 : Math.min(1, Math.max(0, desaturation ?? 0))
+  const ramp = (hex: string): string => {
+    if (desat <= 0) return hex
+    if (desat >= 1) return dimmedFor(hex)
+    return dimHex(hex, desat * 0.55)
+  }
+  const coat = ramp(heraldry.uniform)
+  const trim = ramp(heraldry.hue)
+  const crest = ramp(heraldry.crest)
+  const pennant = ramp(heraldry.pennant)
+  const lit = heraldry.lit && desat < 0.5
   const attention = isAttention(agent)
 
   return (

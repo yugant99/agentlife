@@ -302,3 +302,35 @@ export function ringFor(
   if (agent.workState === 'active' && agent.phase === 'tool') return 'success'
   return 'muted'
 }
+
+// --- Walk ribbons -----------------------------------------------------------------
+
+/**
+ * A walk ribbon follows the remaining cityGraph route: at most this many
+ * points (worker position first, then route waypoints), so one instanced set
+ * of (MAX * (MAX-1)) quads bounds overdraw. Short on purpose: the ribbon is a
+ * direction hint at city zoom, not the whole trip.
+ */
+export const RIBBON_MAX_POINTS = 9
+
+/**
+ * The ribbon polyline: the worker position plus the next route waypoints up
+ * to `maxPoints`. Pure; pass a scratch `out` from a frame loop to avoid
+ * per-frame allocation (the scratch is truncated in place and returned).
+ * Without `out` a fresh array is returned for tests and one-shot layout.
+ */
+export function ribbonPointsFromRoute(
+  pos: readonly [number, number],
+  route: readonly (readonly [number, number])[],
+  maxPoints = RIBBON_MAX_POINTS,
+  out?: [number, number][],
+): [number, number][] {
+  const target = out ?? []
+  target.length = 0
+  const cap = Math.floor(maxPoints)
+  if (!(cap >= 1)) return target
+  target.push([pos[0], pos[1]])
+  const rest = Math.min(route.length, cap - 1)
+  for (let i = 0; i < rest; i += 1) target.push([route[i][0], route[i][1]])
+  return target
+}
