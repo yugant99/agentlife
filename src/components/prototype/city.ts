@@ -114,16 +114,30 @@ export interface Building {
   parts: BuildingPart[]
 }
 export interface WindowPanel { x: number; y: number; z: number; rot: number; w: number; h: number; district: DistrictId }
-export interface RoofCap { x: number; z: number; y: number; w: number; d: number; h: number }
-export interface Spire { x: number; z: number; y: number; r: number; h: number }
+export interface RoofCap { x: number; z: number; y: number; w: number; d: number; h: number; district: DistrictId }
+export interface Spire { x: number; z: number; y: number; r: number; h: number; district: DistrictId }
 
+// Lane 1C material reboot: hues separated by district (value stays 20–45% for
+// midnight legibility). citadel 215° blue-slate, foundry 12° rust, archive 160°
+// jade, observatory 225° indigo, port 190° tar-teal, gateway 265° violet.
 const COLORS: Record<DistrictId, string[]> = {
-  citadel: ['#3a4860', '#44536c', '#3f4c62'],
-  foundry: ['#463a38', '#52413a', '#3f342f'],
-  archive: ['#3b4a46', '#45564f', '#37443f'],
-  observatory: ['#37424f', '#41505f', '#3a4653'],
-  port: ['#39464a', '#445256', '#3c4a4c'],
-  gateway: ['#443f5c', '#4f4869', '#3d3850'],
+  citadel: ['#33465e', '#3d546f', '#2e3d52'],
+  foundry: ['#5a3630', '#6b4034', '#4a2e28'],
+  archive: ['#2f4a44', '#3d5c52', '#33463f'],
+  observatory: ['#343c5c', '#404a6e', '#2e3450'],
+  port: ['#2e444a', '#3a545b', '#2a3e42'],
+  gateway: ['#4e3f68', '#5e4a7a', '#443757'],
+}
+
+// Per-district parapet/trim tint for the single instanced trim mesh in the scene.
+// Keeps silhouette-first reads at city zoom without extra draws.
+export const TRIM: Record<DistrictId, string> = {
+  citadel: '#c9c2b0',
+  foundry: '#8a4a34',
+  archive: '#6fd8b8',
+  observatory: '#c9884a',
+  port: '#7a6a4f',
+  gateway: '#9a86d0',
 }
 const HEIGHTS: Record<DistrictId, [number, number]> = {
   citadel: [24, 48],
@@ -196,6 +210,30 @@ function nearPlaza(x: number, z: number) {
   return SPOT_CARVES.some(([px, pz]) => Math.hypot(x - px, z - pz) < SPOT_CARVE)
 }
 
+// --- Hero tower (Lane 1C skyline surgery) -----------------------------------
+//
+// The hero sits on an existing 10-unit building lattice cell so it never lands on
+// streets, plazas, work spots, water or the canal, and the street graph
+// (cityGraph.ts) is untouched. (15,15) is a citadel-district cell outside every
+// carve: hypot 21.2 >= 18 core, clear of harbor/canal/plaza/spot pads.
+export const HERO_CELL: [number, number] = [15, 15]
+export const HERO_HEIGHT = 62
+export const HERO_SPIRE_HEIGHT = 14
+
+/** True for 10-unit lattice cells (buildings sit at i*10+5, streets at multiples of 10). */
+export function isLatticeCell(x: number, z: number): boolean {
+  return (x - 5) % 10 === 0 && (z - 5) % 10 === 0
+}
+
+/** True when a ground point clears every building carve (core, water, canal, plazas, spots). */
+export function isCarveClear(x: number, z: number): boolean {
+  if (Math.hypot(x, z) < 18) return false
+  if (inWater(x, z)) return false
+  if (nearCanal(x, z, CANAL_WIDTH * 0.5 + 2.4)) return false
+  if (nearPlaza(x, z)) return false
+  return true
+}
+
 const rng = mulberry32(20240928)
 
 export const BUILDINGS: Building[] = []
@@ -217,12 +255,40 @@ for (let i = -6; i <= 5; i += 1) {
     const color = palette[Math.floor(rng() * palette.length) % palette.length]
     const w = 5.0 + rng() * 2.0
     const d = 5.0 + rng() * 2.0
-    const h = lo + rng() * (hi - lo)
-    const archetype = Math.floor(rng() * 4)
+    // Skyline surgery: height falls off from the district centre so centres read
+    // taller. Factor 1.35 at the centre → 0.65 at the rim (plan M2).
+    const rawH = lo + rng() * (hi - lo)
+    const distC = Math.hypot(x - district.center[0], z - district.center[1])
+    const falloff = 1.35 - 0.7 * Math.min(1, distC / district.radius)
+    const h = Math.max(4, rawH * falloff)
+    const isHeroCell = x === HERO_CELL[0] && z === HERO_CELL[1]
+    // 15% of buildings take the tower path: main 70%, mid 20% at 0.72 scale,
+    // crown 10% at 0.45 scale (two setbacks).
+    const isTower = isHeroCell || rng() < 0.15
+    let archetype = Math.floor(rng() * 4)
+    // Cut podium where h < 10 (invisible at city scale): merge into main.
+    if (h < 10) archetype = 0
+    // Cut random spires outside the Citadel/Gateway: spires only crown those towers.
+    if (archetype === 3 && district.id !== 'citadel' && district.id !== 'gateway') archetype = 2
     const parts: BuildingPart[] = []
     let roof: RoofKind = rng() < 0.5 ? 'cap' : 'flat'
 
-    if (archetype === 0) {
+    if (isHeroCell) {
+      // Hero needle on its lattice cell: three setbacks totalling HERO_HEIGHT plus
+      // a spire. Citadel palette so it reads as the district crown.
+      const heroColor = COLORS.citadel[1]
+      parts.push({ kind: 'main', x, z, y0: 0, w: 8, d: 8, h: 34, color: heroColor })
+      parts.push({ kind: 'main', x, z, y0: 34, w: 5.8, d: 5.8, h: 18, color: heroColor })
+      parts.push({ kind: 'upper', x, z, y0: 52, w: 3.6, d: 3.6, h: 10, color: heroColor })
+      roof = 'spire'
+    } else if (isTower) {
+      const mainH = h * 0.7
+      const midH = h * 0.2
+      const crownH = h - mainH - midH
+      parts.push({ kind: 'main', x, z, y0: 0, w, d, h: mainH, color })
+      parts.push({ kind: 'main', x, z, y0: mainH, w: w * 0.72, d: d * 0.72, h: midH, color })
+      parts.push({ kind: 'upper', x, z, y0: mainH + midH, w: w * 0.45, d: d * 0.45, h: crownH, color })
+    } else if (archetype === 0) {
       parts.push({ kind: 'main', x, z, y0: 0, w, d, h, color })
     } else if (archetype === 1) {
       const podium = Math.min(9, w * 1.3)
@@ -244,36 +310,41 @@ for (let i = -6; i <= 5; i += 1) {
 
     const top = parts[parts.length - 1]
     const topY = top.y0 + top.h
-    BUILDINGS.push({ x, z, district: district.id, color, height: topY, roof, parts })
+    const finalColor = isHeroCell ? COLORS.citadel[1] : color
+    BUILDINGS.push({ x, z, district: district.id, color: finalColor, height: topY, roof, parts })
     if (roof === 'spire') {
-      const r = Math.min(top.w, top.d) * 0.22
-      SPIRES.push({ x, z, y: topY, r, h: 6 + rng() * 7 })
+      const r = isHeroCell ? 1.2 : Math.min(top.w, top.d) * 0.22
+      const sh = isHeroCell ? HERO_SPIRE_HEIGHT : 6 + rng() * 7
+      SPIRES.push({ x, z, y: topY, r, h: sh, district: district.id })
     } else {
-      ROOFCAPS.push({ x, z, y: topY + 0.45, w: top.w * 1.06, d: top.d * 1.06, h: 0.9 })
+      ROOFCAPS.push({ x, z, y: topY + 0.45, w: top.w * 1.06, d: top.d * 1.06, h: 0.9, district: district.id })
     }
 
-    // Sparse windows on vertical facades only: 1-2 chosen facades, a few rows/columns,
-    // ~45% lit. Never on top/bottom faces.
-    if (top.h >= 5) {
-      const cols = Math.max(1, Math.min(3, Math.round(top.w / 2.2)))
-      const rows = Math.max(1, Math.min(5, Math.round(top.h / 3.4)))
-      const colW = top.w / (cols + 0.5)
-      const rowH = top.h / (rows + 0.6)
-      const facadeOrder = rng() < 0.5 ? [0, 2] : [1, 3]
-      let placed = 0
-      for (const facade of facadeOrder) {
-        for (let c = 0; c < cols && placed < 10; c += 1) {
-          for (let r = 0; r < rows && placed < 10; r += 1) {
+    // Facade windows, full-height and denser: per-floor rows (floor(h/3)) on every
+    // part with h >= 3, all four facades on towers, two on slabs, capped at
+    // 24 per building so the instanced glow set stays bounded. ~45% kept.
+    const facadesAll = isTower || isHeroCell ? [0, 1, 2, 3] : rng() < 0.5 ? [0, 2] : [1, 3]
+    let placed = 0
+    for (const part of parts) {
+      if (placed >= 24) break
+      if (part.h < 3) continue
+      const cols = Math.max(1, Math.min(4, Math.round(part.w / 2.2)))
+      const rows = Math.max(1, Math.min(8, Math.floor(part.h / 3)))
+      const colW = part.w / (cols + 0.5)
+      const rowH = part.h / (rows + 0.6)
+      for (const facade of facadesAll) {
+        for (let c = 0; c < cols && placed < 24; c += 1) {
+          for (let r = 0; r < rows && placed < 24; r += 1) {
             if (rng() > 0.45) continue
-            const along = (c + 0.75) * colW - top.w / 2
-            const y = top.y0 + (r + 0.9) * rowH
+            const along = (c + 0.75) * colW - part.w / 2
+            const y = part.y0 + (r + 0.9) * rowH
             let wx = x
             let wz = z
             let rot = 0
-            if (facade === 0) { wx = x + along; wz = z + top.d / 2 + 0.07 }
-            else if (facade === 1) { wx = x - along; wz = z - top.d / 2 - 0.07; rot = Math.PI }
-            else if (facade === 2) { wx = x + top.w / 2 + 0.07; wz = z + along; rot = Math.PI / 2 }
-            else { wx = x - top.w / 2 - 0.07; wz = z - along; rot = -Math.PI / 2 }
+            if (facade === 0) { wx = x + along; wz = z + part.d / 2 + 0.07 }
+            else if (facade === 1) { wx = x - along; wz = z - part.d / 2 - 0.07; rot = Math.PI }
+            else if (facade === 2) { wx = x + part.w / 2 + 0.07; wz = z + along; rot = Math.PI / 2 }
+            else { wx = x - part.w / 2 - 0.07; wz = z - along; rot = -Math.PI / 2 }
             WINDOWS.push({ x: wx, y, z: wz, rot, w: 0.85, h: 0.7, district: district.id })
             placed += 1
           }
@@ -282,6 +353,10 @@ for (let i = -6; i <= 5; i += 1) {
     }
   }
 }
+
+// Hero handle for the scene (<HeroTower/>) and for node tests. The loop above
+// guarantees the cell exists; the non-null assertion documents that invariant.
+export const HERO: Building = BUILDINGS.find((b) => b.x === HERO_CELL[0] && b.z === HERO_CELL[1]) as Building
 
 const byKind = (kind: PartKind) => BUILDINGS.flatMap((b) => b.parts.filter((p) => p.kind === kind))
 export const PODIUM_PARTS = byKind('podium')
