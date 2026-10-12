@@ -141,9 +141,11 @@ const fragmentShader = /* glsl */ `
     float twinkle = 0.6 + 0.4 * sin(uTime * 1.6 + sh * 43.0);
     col += vec3(0.50, 0.60, 0.80) * starPoint * step(0.986, sh) * twinkle * 0.32 * starMask;
     float brightStar = step(0.9972, sh) * (1.0 - smoothstep(0.0, 0.06, starDist)) * starMask;
-    vec2 f2 = abs(fract(gridPos) - 0.5);
-    float cross = (1.0 - smoothstep(0.0, 0.03, f2.x)) + (1.0 - smoothstep(0.0, 0.03, f2.y));
-    col += vec3(0.85, 0.90, 1.0) * brightStar * (0.7 + 0.3 * cross) * (0.7 + 0.3 * twinkle);
+    // Glint spikes across the star cell (two axes of the 3D cell). Not named cross,
+    // which would shadow the built-in used for the disk basis below.
+    vec2 f2 = abs(fract(gridPos.xy) - 0.5);
+    float glint = (1.0 - smoothstep(0.0, 0.03, f2.x)) + (1.0 - smoothstep(0.0, 0.03, f2.y));
+    col += vec3(0.85, 0.90, 1.0) * brightStar * (0.7 + 0.3 * glint) * (0.7 + 0.3 * twinkle);
 
     // Bounded detail region scaled with the effect; if S grows, the costly branch grows.
     if (cosA > cos(min(0.64 * S, 1.45))) {
