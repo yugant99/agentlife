@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { CourtyardCharacter } from './CourtyardCharacter'
@@ -6,6 +6,7 @@ import { GATEWAY_ARCH, WALK_Y, WORK_SPOTS } from './city'
 import type { DistrictId } from './city'
 import type { CityAgent, ToolKind } from './agentModel'
 import { DWELL_MIN_MS } from './agentModel'
+import { heraldryFor } from './heraldry'
 import { buildRoadGraph, pathToSpot } from './cityGraph'
 import type { RoadGraph } from './cityGraph'
 import {
@@ -30,6 +31,11 @@ const MAX_LEAVING = 6
 const RECONCILE_MS = 500
 const MAX_TETHERS = 16
 const SLOT_REPATH_DIST = 0.6
+// Name-tag culling: Html tags mount only for hovered, selected or fresh
+// needs-input workers within TAG_DISTANCE units, at most MAX_TAGS tags.
+const TAG_DISTANCE = 40
+const MAX_TAGS = 6
+const TAG_CULL_MS = 250
 
 const CENTERS: Record<DistrictId, readonly [number, number]> = {
   citadel: WORK_SPOTS.citadel.center,
@@ -110,6 +116,66 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
   const lastT = useRef<number | null>(null)
   const reconcileAcc = useRef(0)
   const [, bump] = useReducer((value: number) => value + 1, 0)
+
+  // Tag-culling state. Hover is a discrete React state (pointer events only);
+  // the culled tag set lives in a ref and re-renders only when membership
+  // changes, so the frame loop never sets state per frame.
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const hoveredRef = useRef<string | null>(null)
+  hoveredRef.current = hoveredId
+  const selectedRef = useRef<string | undefined>(selectedId)
+  selectedRef.current = selectedId
+  const visibleTags = useRef<Set<string>>(new Set())
+  const lastCam = useRef({ x: 0, y: 0, z: 0 })
+  const cullAcc = useRef(0)
+  const cullScratch = useRef<{ id: string; rank: number; dist: number }[]>([])
+
+  function handleHover(id: string | null): void {
+    setHoveredId(id)
+  }
+
+  // Recompute the mounted tag set: hovered, selected or fresh needs-input
+  // workers within TAG_DISTANCE, ranked selected > hovered > needs-input then
+  // nearest, capped at MAX_TAGS. Bumps only when membership changes.
+  function runCull(): void {
+    const scratch = cullScratch.current
+    scratch.length = 0
+    const cam = lastCam.current
+    const selected = selectedRef.current
+    const hovered = hoveredRef.current
+    for (const [id, runtime] of runtimes.current) {
+      const agent = runtime.agent
+      const isSelected = selected === id
+      const isHovered = hovered === id
+      const needy = !runtime.leaving
+        && agent.freshness === 'fresh'
+        && agent.workState === 'needs-input'
+      if (!isSelected && !isHovered && !needy) continue
+      const dx = runtime.pos.x - cam.x
+      const dy = runtime.pos.y + 1 - cam.y
+      const dz = runtime.pos.z - cam.z
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (dist > TAG_DISTANCE) continue
+      scratch.push({ id, rank: isSelected ? 0 : isHovered ? 1 : 2, dist })
+    }
+    scratch.sort((a, b) => a.rank - b.rank || a.dist - b.dist || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    const count = Math.min(MAX_TAGS, scratch.length)
+    const prev = visibleTags.current
+    let same = prev.size === count
+    if (same) {
+      for (let i = 0; i < count; i += 1) {
+        if (!prev.has(scratch[i].id)) {
+          same = false
+          break
+        }
+      }
+    }
+    if (!same) {
+      prev.clear()
+      for (let i = 0; i < count; i += 1) prev.add(scratch[i].id)
+      bump()
+    }
+  }
 
   const agentsRef = useRef(agents)
   agentsRef.current = agents
@@ -278,17 +344,27 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, reducedMotion])
 
+  // Hover and selection flip the tag set immediately (using the last camera
+  // position); the frame loop re-culls on a throttle as the camera moves.
+  useEffect(() => {
+    runCull()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hoveredId, selectedId])
+
   useEffect(() => () => {
     tetherGeom.current?.dispose()
     tetherGeom.current = null
   }, [])
 
-  useFrame(({ clock: frameClock }) => {
+  useFrame(({ clock: frameClock, camera }) => {
     const now = frameClock.elapsedTime
     const delta = lastT.current === null ? 0 : Math.max(0, now - lastT.current)
     lastT.current = now
     if (pausedRef.current) return
     if (typeof document !== 'undefined' && document.hidden) return
+    lastCam.current.x = camera.position.x
+    lastCam.current.y = camera.position.y
+    lastCam.current.z = camera.position.z
     const dtMs = Math.min(delta, 0.06) * 1000
     clock.current += dtMs
 
@@ -296,6 +372,12 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
     if (reconcileAcc.current > RECONCILE_MS) {
       reconcileAcc.current = 0
       if (reconcile()) bump()
+    }
+
+    cullAcc.current += dtMs
+    if (cullAcc.current > TAG_CULL_MS) {
+      cullAcc.current = 0
+      runCull()
     }
 
     let flipped = false
@@ -426,6 +508,10 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
         const gesture = runtime.leaving || !runtime.moving ? spotGesture : spotGesture === 'sit' ? 'idle' : spotGesture
         const ring = ringFor(agent, selectedId === id)
         const showBeam = !runtime.leaving && agent.freshness === 'fresh' && agent.workState === 'needs-input'
+        // Heraldry is pure and discrete-render only: computed here, consumed by
+        // the character (livery) and the culled tag set above.
+        const heraldry = heraldryFor(agent)
+        const showTag = visibleTags.current.has(id)
         return (
           <group
             key={id}
@@ -453,6 +539,9 @@ export function Workers({ agents, selectedId, paused, reducedMotion, celebration
                 reducedMotion={reducedMotion}
                 selected={selectedId === id}
                 dimmed={agent.freshness !== 'fresh'}
+                heraldry={heraldry}
+                showTag={showTag}
+                onHover={handleHover}
                 onSelect={onSelect}
               />
             </group>
