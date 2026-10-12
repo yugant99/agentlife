@@ -53,6 +53,7 @@ const fragmentShader = /* glsl */ `
   uniform float uBright;
   uniform vec3 uDir;
   uniform float uFlare;
+  uniform float uLite;
 
   float hash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -117,17 +118,19 @@ const fragmentShader = /* glsl */ `
     // Hole mask for scenery gating (same angles as the star mask below).
     float starMask = 1.0 - smoothstep(cos(0.1984 * S), cos(0.0744 * S), cosA);
 
-    // Milky Way band: distance to a tilted great circle, broken by 2-octave FBM.
-    vec3 bandN = normalize(vec3(0.45, 0.25, 0.86));
-    float bandD = abs(dot(d, bandN));
-    float mwBand = exp(-pow(bandD / 0.28, 2.0));
-    float mwBreak = fbm2(d.xz / (0.35 + abs(d.y)) * 1.4 + 3.7);
-    col += vec3(0.095, 0.120, 0.200) * mwBand * (0.30 + 0.70 * mwBreak) * 0.55 * starMask;
-    // Dust lane: thin darkening inside the band.
-    col *= 1.0 - mwBand * smoothstep(0.45, 0.75, mwBreak) * 0.25 * starMask;
-    // Faint violet/teal nebula, kept out of the hole glare.
-    float neb = fbm2(vec2(d.x * 2.1 + 9.0, d.z * 2.1 - d.y * 3.0));
-    col += mix(vec3(0.10, 0.06, 0.20), vec3(0.04, 0.14, 0.16), neb) * 0.10 * starMask;
+    // Milky Way band + dust lane + faint nebula (scenery; skipped in lite).
+    if (uLite < 0.5) {
+      vec3 bandN = normalize(vec3(0.45, 0.25, 0.86));
+      float bandD = abs(dot(d, bandN));
+      float mwBand = exp(-pow(bandD / 0.28, 2.0));
+      float mwBreak = fbm2(d.xz / (0.35 + abs(d.y)) * 1.4 + 3.7);
+      col += vec3(0.095, 0.120, 0.200) * mwBand * (0.30 + 0.70 * mwBreak) * 0.55 * starMask;
+      // Dust lane: thin darkening inside the band.
+      col *= 1.0 - mwBand * smoothstep(0.45, 0.75, mwBreak) * 0.25 * starMask;
+      // Faint violet/teal nebula, kept out of the hole glare.
+      float neb = fbm2(vec2(d.x * 2.1 + 9.0, d.z * 2.1 - d.y * 3.0));
+      col += mix(vec3(0.10, 0.06, 0.20), vec3(0.04, 0.14, 0.16), neb) * 0.10 * starMask;
+    }
 
     // Magnitude stars: faint field + rare bright sparks with a cross glint.
     vec3 gridPos = d * 160.0;
@@ -171,9 +174,13 @@ const fragmentShader = /* glsl */ `
       float echo = exp(-pow((uy - echoY) / (0.012 * S), 2.0)) * exp(-pow(ux / (0.15 * S), 2.0)) * 0.5;
 
       // Polar streak turbulence: 3-octave value noise, no textures.
+      // Lite skips the turbulence octaves and holds a flat mid value.
       float r = ang / rs;
       float th = atan(uy - frontY, ux);
-      float streak = fbm3(vec2(th * 2.2 - uTime * 0.55 * (1.5 / max(r, 0.6)), r * 5.0));
+      float streak = 0.5;
+      if (uLite < 0.5) {
+        streak = fbm3(vec2(th * 2.2 - uTime * 0.55 * (1.5 / max(r, 0.6)), r * 5.0));
+      }
       float turb = 0.45 + 0.90 * streak;
 
       // White-hot inner edge cooling to amber outside.
@@ -202,7 +209,7 @@ const fragmentShader = /* glsl */ `
   }
 `
 
-export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, direction = [0.18, 0.24, -1.0], paused = false, stillTime = STILL_TIME, worldLocked = false, activeCount, needsYouCount }: {
+export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, direction = [0.18, 0.24, -1.0], paused = false, stillTime = STILL_TIME, worldLocked = false, activeCount, needsYouCount, detail = 'full' }: {
   reducedMotion: boolean
   size?: number
   brightness?: number
@@ -214,6 +221,8 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
   activeCount?: number
   /** Aggregate fresh needs-input count: slow gold rim sweep while > 0. Undefined disables the flare. */
   needsYouCount?: number
+  /** 'full' keeps the unchanged look; 'lite' skips the Milky Way and turbulence octaves. The lead wires lite on the low tier. */
+  detail?: 'full' | 'lite'
 }) {
   const mesh = useRef<THREE.Mesh>(null)
   const reducedRef = useRef(reducedMotion)
@@ -244,6 +253,7 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
       uBright: { value: brightness },
       uDir: { value: new THREE.Vector3(direction[0], direction[1], direction[2]).normalize() },
       uFlare: { value: 0 },
+      uLite: { value: 0 },
     },
     side: THREE.BackSide,
     depthWrite: false,
@@ -254,7 +264,8 @@ export function BlackHoleBackdrop({ reducedMotion, size = 1, brightness = 1, dir
   useEffect(() => {
     material.uniforms.uSize.value = size
     ;(material.uniforms.uDir.value as THREE.Vector3).set(direction[0], direction[1], direction[2]).normalize()
-  }, [material, size, direction])
+    material.uniforms.uLite.value = detail === 'lite' ? 1 : 0
+  }, [material, size, direction, detail])
   const geometry = useMemo(() => new THREE.SphereGeometry(SKY_RADIUS, 24, 16), [])
 
   useEffect(() => () => {

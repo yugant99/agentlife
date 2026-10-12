@@ -9,6 +9,17 @@ import * as city from './components/prototype/city'
 import { cityCounts } from './components/prototype/datamap'
 import { PROVIDER_PALETTE } from './components/prototype/heraldry'
 import { majorityProvider, newShipEvents } from './components/prototype/vehicles'
+import type { CameraShot, QualityTier } from './components/prototype/sceneControl'
+import { createQualityState, parseQualityOverride, updateQuality } from './components/prototype/quality'
+import type { QualityState } from './components/prototype/quality'
+import {
+  ATTRACT_IDLE_MS, INTRO_DURATION_MS, TOUR_SHOT_MS,
+  advanceTourState, buildTourQueue, currentTourStop, idleDue,
+  introFromShot, introToShot, markIntroSeen, parseAttractFlag,
+  readIntroSeen, safeSessionStorage, shouldSkipIntro, shotForStop,
+  startTourState, stopTourState,
+} from './components/prototype/tour'
+import type { TourState } from './components/prototype/tour'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
@@ -48,6 +59,14 @@ function readDebugFlag(): boolean {
     return new URLSearchParams(window.location.search).get('debug') === '1'
   } catch {
     return false
+  }
+}
+
+function readSearch(): string {
+  try {
+    return window.location.search
+  } catch {
+    return ''
   }
 }
 
@@ -115,6 +134,100 @@ function PrototypeApp() {
   }, [agents, isLive])
   const shipCount = isLive ? liveShipTotal : state.ships.length
 
+  // --- Wave 3 Lane 3C: quality ladder, arrival glide, attract tour ------------
+  const search = useMemo(() => readSearch(), [])
+  const pinnedQuality = useMemo(() => parseQualityOverride(search), [search])
+  const attractForced = useMemo(() => parseAttractFlag(search), [search])
+  const [seenIntro] = useState(() => readIntroSeen(safeSessionStorage()))
+  const skipIntro = useMemo(
+    () => shouldSkipIntro({ search, reducedMotion, seen: seenIntro }) || attractForced,
+    [search, reducedMotion, seenIntro, attractForced],
+  )
+
+  // Tier ladder: smoothed fps from the scene folds into the pure machine; only
+  // tier changes re-render. ?quality= pins the tier.
+  const qualityMachine = useRef<QualityState | null>(null)
+  if (qualityMachine.current === null) qualityMachine.current = createQualityState(pinnedQuality)
+  const [quality, setQuality] = useState<QualityTier>(() => qualityMachine.current?.tier ?? 'high')
+  const lastFpsAt = useRef<number | null>(null)
+  const handleFrameRate = useCallback((fps: number) => {
+    const machine = qualityMachine.current
+    if (!machine) return
+    const now = performance.now()
+    const last = lastFpsAt.current
+    lastFpsAt.current = now
+    const dt = last === null ? 1000 : Math.min(Math.max(now - last, 0), 5000)
+    const next = updateQuality(machine, fps, dt)
+    qualityMachine.current = next
+    if (next.tier !== machine.tier) setQuality(next.tier)
+  }, [])
+
+  // The camera shot: arrival glide or attract tour while set, normal views once null.
+  const [shot, setShot] = useState<CameraShot | null>(() => (skipIntro ? null : introFromShot()))
+  const [tour, setTour] = useState<TourState>(() => stopTourState())
+  const lastActivity = useRef<number>(Date.now())
+  const tourSeq = useRef(0)
+  const introCompleted = useRef(false)
+
+  const stopTouring = useCallback(() => {
+    setTour((current) => (current.active ? stopTourState() : current))
+    setShot((current) => (current && current.id.startsWith('tour-') ? null : current))
+  }, [])
+
+  // Any user input yields the tour immediately and releases the camera.
+  const bumpActivity = useCallback(() => {
+    lastActivity.current = Date.now()
+    stopTouring()
+  }, [stopTouring])
+
+  const tourQueue = useMemo(() => buildTourQueue(agents), [agents])
+
+  // Arrival glide: the initial shot holds ~1.25x out; on first ready the
+  // camera eases home over 2.8 s, then the shot releases. StrictMode-safe:
+  // the re-run reschedules after cleanup clears the first timer.
+  useEffect(() => {
+    if (!ready || !webgl) return
+    if (skipIntro || introCompleted.current) {
+      setShot((current) => (current && current.id.startsWith('intro') ? null : current))
+      return
+    }
+    setShot(introToShot())
+    const id = window.setTimeout(() => {
+      introCompleted.current = true
+      markIntroSeen(safeSessionStorage())
+      setShot((current) => (current && current.id === 'intro' ? null : current))
+    }, INTRO_DURATION_MS + 200)
+    return () => window.clearTimeout(id)
+  }, [ready, webgl, skipIntro])
+
+  // Attract tour: one stop per shot, advancing about every 6 s.
+  useEffect(() => {
+    if (!tour.active) return
+    tourSeq.current += 1
+    setShot(shotForStop(currentTourStop(tourQueue, tour), tourSeq.current))
+    const id = window.setTimeout(() => {
+      setTour((current) => advanceTourState(current))
+    }, TOUR_SHOT_MS)
+    return () => window.clearTimeout(id)
+  }, [tour, tourQueue])
+
+  // Idle watch: 60 s without input (or ?attract=1) starts the tour once ready.
+  // Reduced motion and pause keep a readable still scene, so no tour there.
+  useEffect(() => {
+    if (!ready || !webgl) return
+    if (reducedMotion || !playing) {
+      stopTouring()
+      return
+    }
+    if (tour.active) return
+    const id = window.setInterval(() => {
+      if (attractForced || idleDue(lastActivity.current, Date.now(), ATTRACT_IDLE_MS)) {
+        setTour(startTourState())
+      }
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [ready, webgl, reducedMotion, playing, tour.active, attractForced, stopTouring])
+
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
     const update = () => setReducedMotion(query.matches)
@@ -122,10 +235,8 @@ function PrototypeApp() {
     return () => query.removeEventListener('change', update)
   }, [])
 
-  useEffect(() => {
-    const id = window.setTimeout(() => setReady(true), 6000)
-    return () => window.clearTimeout(id)
-  }, [])
+  // The loading veil lifts only on the scene's onReady (or the error
+  // boundary); WebGL failure keeps the plain-HTML fallback below.
 
   // One dwell timer per committed step (not a per-frame React state update).
   // The simulation timeline does not advance while live agents are shown.
@@ -197,14 +308,15 @@ function PrototypeApp() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      bumpActivity()
       if (event.key === 'Escape') escape()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [escape])
+  }, [escape, bumpActivity])
 
   return (
-    <main className="proto-app">
+    <main className="proto-app" onPointerDown={bumpActivity}>
       {webgl ? (
         <SceneBoundary
           onError={handleReady}
@@ -228,6 +340,10 @@ function PrototypeApp() {
             reducedMotion={reducedMotion}
             showStats={debug}
             statsSink={statsSink}
+            quality={quality}
+            shot={shot}
+            onFrameRate={handleFrameRate}
+            onUserInteract={bumpActivity}
             onSelect={selectAgent}
             onDistrict={goDistrict}
             onReady={handleReady}
