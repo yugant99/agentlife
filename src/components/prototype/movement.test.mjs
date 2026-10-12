@@ -10,6 +10,8 @@ import {
   gestureForWorker,
   layoutTargets,
   renderPriority,
+  RIBBON_MAX_POINTS,
+  ribbonPointsFromRoute,
   ringFor,
   selectRendered,
   slotPosition,
@@ -185,4 +187,25 @@ test('only on-screen historical agents walk out, so faded or never-seen ones nev
   assert.deepEqual(selectLeaving(agents, new Set(), 6), [])
   assert.deepEqual(selectLeaving(agents, new Set(['b', 'c', 'd']), 6).map((agent) => agent.id), ['b', 'c'])
   assert.deepEqual(selectLeaving(agents, new Set(['a', 'b', 'c']), 2).map((agent) => agent.id), ['a', 'b'])
+})
+
+test('ribbon points follow the remaining route and cap at a short hint', () => {
+  assert.ok(RIBBON_MAX_POINTS >= 4 && RIBBON_MAX_POINTS <= 12)
+  assert.deepEqual(ribbonPointsFromRoute([0, 0], []), [[0, 0]])
+  assert.deepEqual(
+    ribbonPointsFromRoute([0, 0], [[1, 0], [2, 0], [3, 0]]),
+    [[0, 0], [1, 0], [2, 0], [3, 0]],
+  )
+  const long = Array.from({ length: 40 }, (_, i) => [i + 1, 0])
+  const capped = ribbonPointsFromRoute([0, 0], long)
+  assert.equal(capped.length, RIBBON_MAX_POINTS)
+  assert.deepEqual(capped[0], [0, 0])
+  assert.deepEqual(capped[capped.length - 1], [RIBBON_MAX_POINTS - 1, 0])
+  // The scene reuses one scratch array per frame: out is truncated in place.
+  const scratch = [[9, 9], [9, 9], [9, 9]]
+  const reused = ribbonPointsFromRoute([5, 5], [[6, 6]], 9, scratch)
+  assert.equal(reused, scratch)
+  assert.deepEqual(reused, [[5, 5], [6, 6]])
+  assert.deepEqual(ribbonPointsFromRoute([0, 0], [[1, 1]], 0), [])
+  assert.deepEqual(ribbonPointsFromRoute([0, 0], [[1, 1]], 1), [[0, 0]])
 })
