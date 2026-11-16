@@ -13,13 +13,21 @@ export const SCENE_FOV_DEG = 40
 /** World-locked direction of the black hole in the sky (decorative). */
 export const BLACK_HOLE_DIRECTION: [number, number, number] = [0.03, 0.21, -1.0]
 
-/** Angular radius of the hole's glow at the scene's backdrop size, in degrees. */
-export const BLACK_HOLE_GLOW_DEG = 9
+// On-screen extent of the hole at the scene's backdrop size (0.8), in degrees
+// from its centre, measured from a medium-tier render. The lensed arcs are much
+// wider than they are tall, so a square crop clips their tips; the hole and its
+// inner ring (the core) always fit.
+/** Half-width of the lensed arcs (left/right of the hole centre). */
+export const BLACK_HOLE_ARC_HALF_WIDTH_DEG = 19
+/** Half-height of the lensed arcs (above/below the hole centre). */
+export const BLACK_HOLE_ARC_HALF_HEIGHT_DEG = 9
+/** Radius of the hole plus its bright inner ring. */
+export const BLACK_HOLE_CORE_DEG = 5
 
 /** Normal orbit limit: the camera always looks at least ~9 degrees down. */
 export const DEFAULT_MAX_POLAR = 1.42
-/** Showcase orbit limit (~93 degrees): lets a skyline shot look slightly up. */
-export const SHOWCASE_MAX_POLAR = 1.62
+/** Showcase orbit limit (~94.5 degrees): lets a skyline shot look slightly up. */
+export const SHOWCASE_MAX_POLAR = 1.65
 
 /** Tier used when showcase is on and `?quality=` does not pin one. */
 export const SHOWCASE_DEFAULT_QUALITY: QualityTier = 'medium'
@@ -36,12 +44,13 @@ export interface ShowcasePose {
   target: [number, number, number]
 }
 
-// Skyline poses from the south (+z) looking north, where the hole sits. The
-// camera is offset west so the hero needle (15, 15) stands clear of the hole,
-// and pitched about one degree up so the full glow fits above the skyline.
+// Skyline poses from the south (+z) looking north, aimed straight at the hole
+// (yaw ~1.7 degrees east) and pitched two degrees up so the arcs clear the top
+// edge with margin. The camera sits west of centre so the hero needle (15, 15)
+// stands to the right of the hole. The drift is a slow dolly in and down.
 export const SHOWCASE_POSES: readonly ShowcasePose[] = [
-  { position: [-30, 45, 170], target: [-14.3, 47.6, 20.8] },
-  { position: [-50, 40, 165], target: [-29.1, 43.9, 16.5] },
+  { position: [-30, 45, 170], target: [-25.5, 50.24, 20.16] },
+  { position: [-24, 36, 150], target: [-19.5, 41.24, 0.16] },
 ]
 
 /** `?showcase=1` turns showcase mode on. */

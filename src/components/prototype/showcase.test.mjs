@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  BLACK_HOLE_ARC_HALF_HEIGHT_DEG,
+  BLACK_HOLE_ARC_HALF_WIDTH_DEG,
+  BLACK_HOLE_CORE_DEG,
   BLACK_HOLE_DIRECTION,
-  BLACK_HOLE_GLOW_DEG,
   DEFAULT_MAX_POLAR,
   SCENE_FOV_DEG,
   SHOWCASE_DEFAULT_QUALITY,
@@ -61,14 +63,31 @@ test('every pose sits inside the showcase orbit limits (controls never clamp it)
   }
 })
 
-test('the whole black-hole glow fits in frame at every pose (square crop or wider)', () => {
-  const half = SCENE_FOV_DEG / 2
+// Horizontal half-FOV for an aspect ratio, given the fixed vertical FOV.
+function halfWidthDeg(aspect) {
+  const halfV = (SCENE_FOV_DEG / 2) * (Math.PI / 180)
+  return Math.atan(Math.tan(halfV) * aspect) * (180 / Math.PI)
+}
+
+test('the arcs fit vertically and the whole hole fits at 16:9 at every pose', () => {
+  const halfV = SCENE_FOV_DEG / 2
+  const half169 = halfWidthDeg(16 / 9)
   for (const pose of SHOWCASE_POSES) {
     const { up, right } = directionInView(pose, BLACK_HOLE_DIRECTION)
-    assert.ok(up + BLACK_HOLE_GLOW_DEG <= half, `glow top ${up + BLACK_HOLE_GLOW_DEG} above frame`)
-    assert.ok(up - BLACK_HOLE_GLOW_DEG >= -half, `glow bottom ${up - BLACK_HOLE_GLOW_DEG} below frame`)
-    // Square crop: horizontal half-FOV equals the vertical one.
-    assert.ok(Math.abs(right) + BLACK_HOLE_GLOW_DEG <= half, `glow side ${right} outside a square crop`)
+    // One degree of headroom: the top arc grazed the edge at a one-degree pitch.
+    assert.ok(up + BLACK_HOLE_ARC_HALF_HEIGHT_DEG <= halfV - 1, `arc top ${up + BLACK_HOLE_ARC_HALF_HEIGHT_DEG} too close to the top edge`)
+    assert.ok(up - BLACK_HOLE_ARC_HALF_HEIGHT_DEG >= -halfV, `arc bottom ${up - BLACK_HOLE_ARC_HALF_HEIGHT_DEG} below frame`)
+    assert.ok(Math.abs(right) + BLACK_HOLE_ARC_HALF_WIDTH_DEG <= half169, `arcs ${right} outside a 16:9 frame`)
+  }
+})
+
+test('square crops keep the core and clip the arc tips evenly', () => {
+  const halfSquare = halfWidthDeg(1)
+  for (const pose of SHOWCASE_POSES) {
+    const { right } = directionInView(pose, BLACK_HOLE_DIRECTION)
+    assert.ok(Math.abs(right) + BLACK_HOLE_CORE_DEG <= halfSquare, `core ${right} outside a square crop`)
+    // Aimed at the hole, so any clipping of the arc tips is symmetric.
+    assert.ok(Math.abs(right) <= 1, `hole ${right} degrees off centre`)
   }
 })
 

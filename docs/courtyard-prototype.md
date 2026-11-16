@@ -33,8 +33,8 @@ two producers — the HUD shows one at a time and never mixes them.
 - Renderer stats are opt-in: add `?debug=1` (desktop only; hidden on mobile). The counts
   cover every render pass in a frame (scene, shadows, bloom), not just the last one.
 - Recording: add `?showcase=1`. The HUD and district tags are hidden (press H to toggle
-  them), the simulated day plays on a loop (never the live feed, so no workspace names
-  appear), quality pins to medium unless `?quality=` says otherwise, and the camera drifts
+  them), the simulated day plays on a loop and never switches to the live feed on its own
+  (choosing Live from the HUD still shows real workspace names), quality pins to medium unless `?quality=` says otherwise, and the camera drifts
   between skyline shots with the black hole in frame. Any drag or click hands the camera
   to you; the drift resumes after 8 s idle. Poses and timings live in `showcase.ts`.
 - If WebGL cannot start, a plain fallback message is shown and the roster/inspector stay
