@@ -20,7 +20,9 @@ import {
   startTourState, stopTourState,
 } from './components/prototype/tour'
 import type { TourState } from './components/prototype/tour'
-import { SHOWCASE_RESUME_MS, parseShowcaseFlag, showcaseQuality, showcaseShot } from './components/prototype/showcase'
+import {
+  SHOWCASE_RESUME_MS, STORY_BEATS, STORY_START_STEP, parseShowcaseFlag, showcaseQuality, showcaseShot, storyShot,
+} from './components/prototype/showcase'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
@@ -183,7 +185,11 @@ function PrototypeApp() {
   // Showcase reel: null while released to the user, else the current step.
   const [reelStep, setReelStep] = useState<number | null>(null)
   const reelSeq = useRef(0)
+  // Showcase story: index into STORY_BEATS while it plays once on load, else null.
+  const [storyBeat, setStoryBeat] = useState<number | null>(null)
+  const storySeq = useRef(0)
   const releaseReel = useCallback(() => {
+    setStoryBeat((current) => (current === null ? current : null))
     setReelStep((current) => (current === null ? current : null))
     setShot((current) => (current && current.id.startsWith('showcase-') ? null : current))
   }, [])
@@ -244,23 +250,56 @@ function PrototypeApp() {
     return () => window.clearInterval(id)
   }, [ready, webgl, showcase, reducedMotion, playing, tour.active, attractForced, stopTouring])
 
-  // Showcase reel: once ready the camera eases to the first skyline pose, then
-  // drifts between poses. Reduced motion holds the first pose (the rig snaps).
-  // User input releases the camera; the reel takes it back after a short idle.
+  // Showcase: once ready, the story plays once (STORY_BEATS), restarting the
+  // simulated day at STORY_START_STEP so its scripted events land on cue; then
+  // the reel drifts between skyline poses. Reduced motion skips the story and
+  // holds the first pose (the rig snaps). User input releases the camera and
+  // ends the story; the reel takes the camera back after a short idle.
   const reelStarted = useRef(false)
   useEffect(() => {
     if (!showcase || !ready || !webgl || reelStarted.current) return
     reelStarted.current = true
-    setReelStep(0)
-  }, [showcase, ready, webgl])
+    if (reducedMotion) {
+      setReelStep(0)
+      return
+    }
+    let day = resetScenario()
+    for (let step = 0; step < STORY_START_STEP; step += 1) day = advanceScenario(day)
+    setState(day)
+    setPlaying(true)
+    setStoryBeat(0)
+  }, [showcase, ready, webgl, reducedMotion])
 
   useEffect(() => {
-    if (!showcase || !ready || !webgl || reelStep !== null || !reelStarted.current) return
+    if (storyBeat === null) return
+    const beat = STORY_BEATS[storyBeat]
+    storySeq.current += 1
+    setShot(storyShot(storyBeat, storySeq.current))
+    setHudVisible(beat.hud)
+    if (!beat.selectNeedsYou) {
+      // Shots own the camera, so these only clear the inspector and tags.
+      setSelectedId(undefined)
+      setView((current) => (current.scale === 'city' ? current : { scale: 'city' }))
+    }
+    const id = window.setTimeout(() => {
+      if (storyBeat + 1 < STORY_BEATS.length) {
+        setStoryBeat(storyBeat + 1)
+        return
+      }
+      setStoryBeat(null)
+      setHudVisible(false)
+      setReelStep(0)
+    }, beat.holdMs)
+    return () => window.clearTimeout(id)
+  }, [storyBeat])
+
+  useEffect(() => {
+    if (!showcase || !ready || !webgl || reelStep !== null || storyBeat !== null || !reelStarted.current) return
     const id = window.setInterval(() => {
       if (idleDue(lastActivity.current, Date.now(), SHOWCASE_RESUME_MS)) setReelStep(0)
     }, 500)
     return () => window.clearInterval(id)
-  }, [showcase, ready, webgl, reelStep])
+  }, [showcase, ready, webgl, reelStep, storyBeat])
 
   useEffect(() => {
     if (reelStep === null) return
@@ -316,6 +355,19 @@ function PrototypeApp() {
     setView({ scale: 'agent', agentId })
     setFocusRevision((value) => value + 1)
   }, [])
+
+  // During the needs-you beat, as soon as an agent needs you, hand the camera to
+  // the scene's agent view: release the story shot, then select the agent (one
+  // tick later, after the rig has taken control back) so the camera glides to
+  // their Citadel slot and the inspector says who is waiting and why.
+  useEffect(() => {
+    if (storyBeat === null || !STORY_BEATS[storyBeat].selectNeedsYou || selectedId) return
+    const next = nextAttentionCity(agents, undefined)
+    if (!next) return
+    setShot((current) => (current && current.id.startsWith('showcase-') ? null : current))
+    const id = window.setTimeout(() => selectAgent(next), 60)
+    return () => window.clearTimeout(id)
+  }, [storyBeat, agents, selectedId, selectAgent])
 
   // Escape backs out one useful level: agent -> its district -> city. Never leaves a
   // stuck inspector.

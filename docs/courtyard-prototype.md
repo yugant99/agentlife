@@ -34,9 +34,14 @@ two producers — the HUD shows one at a time and never mixes them.
   cover every render pass in a frame (scene, shadows, bloom), not just the last one.
 - Recording: add `?showcase=1`. The HUD and district tags are hidden (press H to toggle
   them), the simulated day plays on a loop and never switches to the live feed on its own
-  (choosing Live from the HUD still shows real workspace names), quality pins to medium unless `?quality=` says otherwise, and the camera drifts
-  between skyline shots with the black hole in frame. Any drag or click hands the camera
-  to you; the drift resumes after 8 s idle. Poses and timings live in `showcase.ts`.
+  (choosing Live from the HUD still shows real workspace names), and quality pins to medium
+  unless `?quality=` says otherwise. On load a ~45 s story plays once: the skyline with the
+  black hole, a worker walking to the test bench, a freighter leaving the Port, a rise over
+  the city, then an agent that needs you (the camera follows them to the Citadel steps and
+  the HUD shows why they wait), and the dashboard. After that the camera drifts between
+  skyline shots. Reload to replay. Any drag or click hands the camera to you and ends the
+  story; the drift resumes after 8 s idle. View changes glide 5x slower in showcase. Beats,
+  poses and timings live in `showcase.ts`, with tests that keep them on the scenario's cues.
 - If WebGL cannot start, a plain fallback message is shown and the roster/inspector stay
   usable because they are HTML, not canvas.
 

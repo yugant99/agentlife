@@ -13,12 +13,18 @@ import {
   SHOWCASE_MAX_POLAR,
   SHOWCASE_POSES,
   SHOWCASE_SHOT_MS,
+  STORY_BEATS,
+  STORY_START_STEP,
+  STORY_TOTAL_MS,
   directionInView,
   parseShowcaseFlag,
   polarAngle,
   showcaseQuality,
   showcaseShot,
+  storyBeatStarts,
+  storyShot,
 } from './showcase.ts'
+import { DWELL_MS, SCENARIO_STEPS } from './scenario.ts'
 import { placementFor } from './toronto.ts'
 import { LANDMARKS } from './landmarks/landmarkTypes.ts'
 import { HERO_CELL, HERO_HEIGHT, HERO_SPIRE_HEIGHT } from './city.ts'
@@ -117,4 +123,64 @@ test('the default overview cannot frame the hole (why showcase needs its own lim
   const overview = { position: [79.8, 103, 144.4], target: [0, 8, 0] }
   const { up } = directionInView(overview, BLACK_HOLE_DIRECTION)
   assert.ok(up > SCENE_FOV_DEG / 2, `expected the hole above the overview frame, got ${up}`)
+})
+
+// --- Story -------------------------------------------------------------------
+
+const stepTime = (step) => (step - STORY_START_STEP) * DWELL_MS
+const firstStepAfterStart = (predicate) => {
+  for (let step = STORY_START_STEP + 1; step < SCENARIO_STEPS.length; step += 1) {
+    if (predicate(SCENARIO_STEPS[step])) return step
+  }
+  return -1
+}
+const beatWindow = (name) => {
+  const starts = storyBeatStarts()
+  const index = STORY_BEATS.findIndex((beat) => beat.name === name)
+  return { start: starts[index], arrive: starts[index] + STORY_BEATS[index].shot.durationMs, end: starts[index] + STORY_BEATS[index].holdMs }
+}
+
+test('the story starts the day just before the first walk to the test bench', () => {
+  const walk = firstStepAfterStart((step) => step.changes.some((change) => change.toolKind === 'test'))
+  assert.equal(walk, STORY_START_STEP + 1)
+  // The walk shot is up while the worker crosses the city (4-10 s walk).
+  const { arrive, end } = beatWindow('walk')
+  assert.ok(arrive <= stepTime(walk) + 10000, 'walk shot arrives after the worker already got there')
+  assert.ok(end >= stepTime(walk) + 4000, 'walk shot leaves before the worker can arrive')
+})
+
+test('the ship beat is framed while the freighter is still sailing', () => {
+  const ship = firstStepAfterStart((step) => Boolean(step.ship))
+  assert.ok(ship > STORY_START_STEP)
+  const { arrive, end } = beatWindow('ship')
+  const sailSeconds = 9 // SHIP_SAIL_SECONDS in CourtyardScene.tsx
+  assert.ok(arrive <= stepTime(ship) + (sailSeconds * 1000) / 2, 'camera arrives after most of the departure')
+  assert.ok(end >= stepTime(ship) + sailSeconds * 1000 - 1000, 'camera leaves before the freighter clears the harbor')
+})
+
+test('the needs-you beat is up before the call and holds while the agent walks over', () => {
+  const needs = firstStepAfterStart((step) => step.changes.some((change) => change.workState === 'needs-input'))
+  assert.ok(needs > STORY_START_STEP)
+  const beat = STORY_BEATS.find((b) => b.name === 'needs-you')
+  assert.equal(beat.hud, true)
+  assert.equal(beat.selectNeedsYou, true)
+  const { start, end } = beatWindow('needs-you')
+  assert.ok(start <= stepTime(needs), 'needs-you shot starts after the call')
+  assert.ok(end >= stepTime(needs) + 10000, 'needs-you shot ends before a 10 s walk to the Citadel finishes')
+})
+
+test('story shape: skyline first, dashboard last, HUD only for the payoff, about 45 s', () => {
+  assert.equal(STORY_BEATS[0].name, 'skyline')
+  assert.equal(STORY_BEATS[STORY_BEATS.length - 1].name, 'dashboard')
+  assert.ok(STORY_BEATS.filter((b) => b.hud).every((b) => b.name === 'needs-you' || b.name === 'dashboard'))
+  assert.ok(STORY_TOTAL_MS >= 35000 && STORY_TOTAL_MS <= 60000, `story is ${STORY_TOTAL_MS} ms`)
+  for (const beat of STORY_BEATS) assert.ok(beat.shot.durationMs <= beat.holdMs, `${beat.name} glides past its hold`)
+  // Shots carry the showcase prefix (input releases them) and fresh ids.
+  const ids = STORY_BEATS.map((_, i) => storyShot(i, i + 1).id)
+  assert.ok(ids.every((id) => id.startsWith('showcase-')))
+  assert.equal(new Set(ids).size, ids.length)
+  // Every story shot sits inside the showcase orbit limit.
+  for (const beat of STORY_BEATS) {
+    assert.ok(polarAngle({ position: beat.shot.position, target: beat.shot.target }) <= SHOWCASE_MAX_POLAR, `${beat.name} would be clamped`)
+  }
 })

@@ -29,7 +29,7 @@ import { GRADE_EXPOSURE, pipelineSettingsForTier, resolveQualityTier, shotDurati
 import { PostFX } from './postfx'
 import { Haze } from './haze'
 import { WaterGlitter } from './WaterGlitter'
-import { BLACK_HOLE_DIRECTION, DEFAULT_MAX_POLAR, SCENE_FOV_DEG, SHOWCASE_MAX_POLAR } from './showcase'
+import { BLACK_HOLE_DIRECTION, DEFAULT_MAX_POLAR, SCENE_FOV_DEG, SHOWCASE_MAX_POLAR, SHOWCASE_TRAVEL_SCALE } from './showcase'
 
 // ---------------------------------------------------------------------------
 // Mythic City. (File name is retained from the earlier courtyard prototype; the
@@ -103,12 +103,14 @@ function useDrivenTime(animate: boolean) {
 
 // --- Camera -----------------------------------------------------------------
 
-function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions, shot }: {
+function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions, shot, travelScale = 1 }: {
   view: city.View
   revision: number
   reducedMotion: boolean
   controlsRef: ControlsRef
   agentPositions: Record<string, [number, number, number]>
+  /** Multiplies view-change travel time (showcase glides instead of snapping). */
+  travelScale?: number
   shot?: CameraShot | null
 }) {
   const camera = useThree((state) => state.camera)
@@ -189,13 +191,13 @@ function CameraRig({ view, revision, reducedMotion, controlsRef, agentPositions,
     anim.current.active = true
     anim.current.isShot = false
     anim.current.start = clock.getElapsedTime()
-    anim.current.duration = duration
+    anim.current.duration = duration * travelScale
     anim.current.fromPos.copy(camera.position)
     anim.current.fromTarget.copy(controls ? controls.target : toTarget)
     anim.current.toPos.copy(toPos)
     anim.current.toTarget.copy(toTarget)
     if (controls) controls.enabled = false
-  }, [districtId, agentId, revision, size.width, size.height, reducedMotion, camera, clock, controlsRef, agentPositions, shot])
+  }, [districtId, agentId, revision, size.width, size.height, reducedMotion, camera, clock, controlsRef, agentPositions, shot, travelScale])
 
   // Wave 3 camera shots: ease from the current pose to the shot over durationMs.
   // A new id starts a move; the same id never restarts one. Reduced motion snaps.
@@ -1762,7 +1764,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         onSelect={onSelect}
       />
 
-      <CameraRig view={view} revision={focusRevision} reducedMotion={reducedMotion} controlsRef={controlsRef} agentPositions={agentPositions} shot={shot} />
+      <CameraRig view={view} revision={focusRevision} reducedMotion={reducedMotion} controlsRef={controlsRef} agentPositions={agentPositions} shot={shot} travelScale={showcase ? SHOWCASE_TRAVEL_SCALE : 1} />
       <OrbitControls
         ref={controlsRef}
         makeDefault
