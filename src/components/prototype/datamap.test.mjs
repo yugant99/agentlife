@@ -177,3 +177,13 @@ test('truthCard derives where, since and next from freshness and clocks', () => 
   )
   assert.ok(!noStart.since.includes('working'), 'missing startedAt must omit duration')
 })
+
+test('the table maps the two working landmarks to their agent fields', () => {
+  const byChannel = new Map(DATAMAP_ROWS.map((row) => [row.channel, row]))
+  const tower = byChannel.get('CN Tower LED amber = someone needs you')
+  assert.ok(tower, 'missing CN Tower row')
+  assert.deepEqual([...tower.fields].sort(), ['freshness', 'workState'])
+  const dome = byChannel.get('Rogers Centre field lights = tests running')
+  assert.ok(dome, 'missing Rogers Centre row')
+  assert.deepEqual([...dome.fields].sort(), ['freshness', 'toolKind', 'workState'])
+})
