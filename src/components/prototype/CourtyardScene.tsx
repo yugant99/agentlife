@@ -11,7 +11,7 @@ import * as city from './city'
 import type { DistrictId, StationId } from './city'
 import { AttentionWedge } from './AttentionWedge'
 import { cityCounts, urgencySort } from './datamap'
-import { paintFacadeColorMap, paintFacadeEmissiveMap } from './facadeTexture'
+import { FACADE_LIT_RATIO, paintFacadeColorMap, paintFacadeEmissiveMap, patchFacadeShader } from './facadeTexture'
 import type { FacadeCanvas } from './facadeTexture'
 import { PROVIDER_PALETTE } from './heraldry'
 import { hasFreshPresence, selectCourierHandoff, TRAM_TOTAL } from './vehicles'
@@ -999,6 +999,15 @@ function DistrictWindows({ counts, frozen, reducedMotion }: { counts: Record<Dis
   )
 }
 
+// Fewer, smaller lit windows than the old half-lit checker, so each glows a bit more.
+const FACADE_EMISSIVE_INTENSITY = 0.4
+
+// World-space facade UVs + plain-wall roofs (see facadeTexture.ts). Module-level
+// so every shell layer shares one compiled program.
+function applyFacadeMapping(shader: { vertexShader: string; fragmentShader: string }): void {
+  patchFacadeShader(shader)
+}
+
 function useFacadeMaps(): { map: THREE.Texture | null; emissiveMap: THREE.Texture | null } {
   const maps = useMemo(() => {
     try {
@@ -1009,17 +1018,20 @@ function useFacadeMaps(): { map: THREE.Texture | null; emissiveMap: THREE.Textur
         canvas.height = h
         return canvas as unknown as FacadeCanvas
       }
-      // Static mid-lit atlas for the instanced shells; per-district live glow
-      // stays in DistrictWindows (emissiveIntensity from the same active counts).
-      const colorCanvas = paintFacadeColorMap(factory, 0.5)
-      const emissiveCanvas = paintFacadeEmissiveMap(factory, 0.5)
+      // Static atlas for the instanced shells; per-district live glow stays in
+      // DistrictWindows (emissiveIntensity from the same active counts). The
+      // atlas repeats in world space (patchFacadeShader), so both maps wrap.
+      const colorCanvas = paintFacadeColorMap(factory, FACADE_LIT_RATIO)
+      const emissiveCanvas = paintFacadeEmissiveMap(factory, FACADE_LIT_RATIO)
       if (!colorCanvas || !emissiveCanvas) return { map: null, emissiveMap: null }
       const map = new THREE.CanvasTexture(colorCanvas as unknown as HTMLCanvasElement)
       map.colorSpace = THREE.SRGBColorSpace
       map.anisotropy = 4
+      map.wrapS = map.wrapT = THREE.RepeatWrapping
       const emissiveMap = new THREE.CanvasTexture(emissiveCanvas as unknown as HTMLCanvasElement)
       emissiveMap.colorSpace = THREE.SRGBColorSpace
       emissiveMap.anisotropy = 4
+      emissiveMap.wrapS = emissiveMap.wrapT = THREE.RepeatWrapping
       return { map, emissiveMap }
     } catch {
       // Degrade to flat colour when the texture is unavailable.
@@ -1052,7 +1064,8 @@ function Buildings() {
             map={facade.map ?? undefined}
             emissiveMap={facade.emissiveMap ?? undefined}
             emissive="#ffcf8a"
-            emissiveIntensity={facade.map ? 0.22 : 0}
+            emissiveIntensity={facade.map ? FACADE_EMISSIVE_INTENSITY : 0}
+            onBeforeCompile={applyFacadeMapping}
           />
           {layer.parts.map((part, k) => (
             <Instance key={k} color={part.color} position={[part.x, part.y0 + part.h / 2, part.z]} scale={[part.w, part.h, part.d]} />
