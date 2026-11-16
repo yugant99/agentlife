@@ -57,8 +57,9 @@ A dense, connected composition built from shared/instanced primitives, no extern
 
 - **Six neighborhoods** on a 10-unit lattice (citadel, foundry, archive, observatory, port,
   gateway) so streets are always clear — composed, not random cuboids.
-- **Buildings**: the deterministic lattice yields 80 composed buildings (down from 88: the
-  three new work-spot carves exclude 8 cells; counted with `BUILDINGS.length`), instanced as three archetype layers
+- **Buildings**: the deterministic lattice yields 64 composed buildings (down from 80: the
+  six Toronto landmark superblocks carve 16 cells; counted with `BUILDINGS.length`, and
+  `isCarveClear` is the single predicate for which cells stay empty), instanced as three archetype layers
   (podium / main / upper) with solid roof caps and spires, plus sparse instanced emissive
   facade windows grouped per district. No per-building textures. Background buildings
   receive shadows but do not cast (one shadow-casting key light only).
@@ -71,7 +72,11 @@ A dense, connected composition built from shared/instanced primitives, no extern
   with quay walls and piers, lit boulevards with instanced lamps, and an elevated rail loop.
 - **Landmarks**: stepped citadel with a lit crown ring; foundry with chimneys, smoke and two
   turning cranes; archive rotunda with a column ring; observatory dome with a turning dish;
-  gateway arch with a glowing portal.
+  gateway arch with a glowing portal. Six Toronto silhouettes stand on the placement in
+  `toronto.ts`: CN Tower (Port, LED amber while someone needs you), Rogers Centre (Port,
+  field lights while tests run), Union Station (Gateway, facing the street), City Hall
+  (Citadel), ROM Crystal (Observatory) and the Distillery (Foundry). Overlapping street
+  segments are removed for the two large superblocks; the walking graph is untouched.
 - **Sky**: the original `BlackHoleBackdrop` is restored above the skyline. It is an original
   stylized shader approximation, **not** actual ray tracing, and it is decorative: it reads
   no agent state. It is sized and positioned explicitly for the city through **optional**
@@ -126,7 +131,7 @@ HUD updates. Reduced motion snaps directly.
 
 ## Motion
 
-- One articulated 3-car tram loops the elevated rail in ~35 s, oriented to the tangent.
+- One 5-car TTC-style streetcar (red body, white band, dark windows and roof) loops the elevated rail in ~35 s, oriented to the tangent. Lit cars equal `cityCounts.working`; the roof board carries the majority-provider tint.
 - Three boats follow canal/harbor routes (46–62 s), plus the one-shot ship boat from the
   Port quay (~9 s sail). Sparse street couriers follow road segments with deterministic
   phases.

@@ -99,6 +99,18 @@ export const DATAMAP_ROWS: readonly DatamapRow[] = [
     degrades: 'Counts freeze while paused; the split stays legible as a still.',
   },
   {
+    channel: 'CN Tower LED amber = someone needs you',
+    fields: ['workState', 'freshness'],
+    rule: 'The tower LED band glows amber while the fresh needs-input count is above zero; cool white scales with fresh-active working, dim at rest.',
+    degrades: 'Signal counts freeze while paused; the still scene keeps the last state.',
+  },
+  {
+    channel: 'Rogers Centre field lights = tests running',
+    fields: ['workState', 'freshness', 'toolKind'],
+    rule: 'Field lights burn while fresh active agents with toolKind test are above zero; dark otherwise. The roof itself is scenery.',
+    degrades: 'Counts freeze while paused; the still scene keeps the last state.',
+  },
+  {
     channel: 'Roster / inspector / history',
     fields: ['id', 'name', 'source', 'workState', 'freshness', 'phase', 'toolKind', 'lastSignalAt', 'startedAt'],
     rule: 'Urgency-sorted with needs-input longest wait first; the inspector shows Doing, Where plus why, Since, Next.',

@@ -5,6 +5,12 @@
 // Convention: y = 0 is street level. Buildings sit on a 10-unit lattice so streets are
 // always clear. Work plazas get a generous building carve (PLAZA_CARVE) which guarantees a
 // clear camera corridor for agent focus, and are dressed with low landscaping.
+//
+// Toronto landmarks (toronto.ts, Lane T3) carve generic buildings and street
+// segments whose rects touch a margin-expanded landmark footprint; the carve
+// runs before any seeded draws so the layout stays deterministic.
+
+import { carveIntersectsRect } from './toronto.ts'
 
 export type DistrictId = 'citadel' | 'foundry' | 'archive' | 'observatory' | 'port' | 'gateway'
 export type StationId = 'forge' | 'planning-table' | 'signal-post'
@@ -225,12 +231,17 @@ export function isLatticeCell(x: number, z: number): boolean {
   return (x - 5) % 10 === 0 && (z - 5) % 10 === 0
 }
 
-/** True when a ground point clears every building carve (core, water, canal, plazas, spots). */
+/**
+ * True when a lattice cell clears every building carve (core, water, canal,
+ * plazas, spots, and the 10x10 cell against each Toronto landmark superblock).
+ * The building loop below uses this exact predicate, so tests can count on it.
+ */
 export function isCarveClear(x: number, z: number): boolean {
   if (Math.hypot(x, z) < 18) return false
   if (inWater(x, z)) return false
   if (nearCanal(x, z, CANAL_WIDTH * 0.5 + 2.4)) return false
   if (nearPlaza(x, z)) return false
+  if (carveIntersectsRect(x - 5, x + 5, z - 5, z + 5)) return false
   return true
 }
 
@@ -245,10 +256,8 @@ for (let i = -6; i <= 5; i += 1) {
   for (let j = -6; j <= 5; j += 1) {
     const x = i * 10 + 5
     const z = j * 10 + 5
-    if (Math.hypot(x, z) < 18) continue // citadel core is authored separately
-    if (inWater(x, z)) continue
-    if (nearCanal(x, z, CANAL_WIDTH * 0.5 + 2.4)) continue
-    if (nearPlaza(x, z)) continue
+    // Citadel core (authored separately), water, canal, plazas, landmark superblocks.
+    if (!isCarveClear(x, z)) continue
     const district = nearestDistrict(x, z)
     const [lo, hi] = HEIGHTS[district.id]
     const palette = COLORS[district.id]
@@ -375,12 +384,17 @@ for (const g of GRID) {
   for (let z = -50; z < 50; z += 10) {
     const zc = z + 5
     if (inWater(g, zc)) continue
-    ROADS.push({ x: g, z: zc, len: 9, along: 'z', wide: g === 0 ? 6.5 : 4.4, lit: g === 0 })
+    // Toronto superblocks: drop segments covered by a landmark footprint.
+    const wide = g === 0 ? 6.5 : 4.4
+    if (carveIntersectsRect(g - wide / 2, g + wide / 2, zc - 4.5, zc + 4.5)) continue
+    ROADS.push({ x: g, z: zc, len: 9, along: 'z', wide, lit: g === 0 })
   }
   for (let x = -50; x < 50; x += 10) {
     const xc = x + 5
     if (inWater(xc, g)) continue
-    ROADS.push({ x: xc, z: g, len: 9, along: 'x', wide: g === 0 ? 6.5 : 4.4, lit: g === 0 })
+    const wide = g === 0 ? 6.5 : 4.4
+    if (carveIntersectsRect(xc - 4.5, xc + 4.5, g - wide / 2, g + wide / 2)) continue
+    ROADS.push({ x: xc, z: g, len: 9, along: 'x', wide, lit: g === 0 })
   }
 }
 

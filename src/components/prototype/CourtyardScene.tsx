@@ -11,6 +11,13 @@ import * as city from './city'
 import type { DistrictId, StationId } from './city'
 import { AttentionWedge } from './AttentionWedge'
 import { cityCounts, urgencySort } from './datamap'
+import { landmarkSignals, placementFor } from './toronto'
+import { CNTower } from './landmarks/CNTower'
+import { RogersCentre } from './landmarks/RogersCentre'
+import { UnionStation } from './landmarks/UnionStation'
+import { CityHall } from './landmarks/CityHall'
+import { RomCrystal } from './landmarks/RomCrystal'
+import { Distillery } from './landmarks/Distillery'
 import { paintFacadeColorMap, paintFacadeEmissiveMap } from './facadeTexture'
 import type { FacadeCanvas } from './facadeTexture'
 import { PROVIDER_PALETTE } from './heraldry'
@@ -556,35 +563,152 @@ function Gateway() {
   )
 }
 
+// --- Toronto landmarks -------------------------------------------------------
+// The six procedural Toronto silhouettes (geometry lanes) mounted on the
+// placement-lane layout (toronto.ts). Only the two "working" landmarks read
+// agent state, as aggregate counts; the rest are scenery. Static under
+// pause/reduced-motion via the shared animate flag (components freeze motion).
+
+function TorontoLandmarks({ agents, paused, reducedMotion, quality }: {
+  agents: CityAgent[]
+  paused: boolean
+  reducedMotion: boolean
+  quality: QualityTier
+}) {
+  const signals = useMemo(() => landmarkSignals(agents), [agents])
+  const cn = placementFor('cn-tower')
+  const rogers = placementFor('rogers-centre')
+  const union = placementFor('union-station')
+  const hall = placementFor('city-hall')
+  const rom = placementFor('rom-crystal')
+  const distillery = placementFor('distillery')
+  return (
+    <group>
+      <CNTower
+        position={[cn.x, 0, cn.z]}
+        rotationY={cn.rotationY}
+        scale={cn.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+        needsYou={signals.needsYou}
+        working={signals.working}
+      />
+      <RogersCentre
+        position={[rogers.x, 0, rogers.z]}
+        rotationY={rogers.rotationY}
+        scale={rogers.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+        testsRunning={signals.testsRunning}
+      />
+      <UnionStation
+        position={[union.x, 0, union.z]}
+        rotationY={union.rotationY}
+        scale={union.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+      />
+      <CityHall
+        position={[hall.x, 0, hall.z]}
+        rotationY={hall.rotationY}
+        scale={hall.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+      />
+      <RomCrystal
+        position={[rom.x, 0, rom.z]}
+        rotationY={rom.rotationY}
+        scale={rom.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+      />
+      <Distillery
+        position={[distillery.x, 0, distillery.z]}
+        rotationY={distillery.rotationY}
+        scale={distillery.scale}
+        paused={paused}
+        reducedMotion={reducedMotion}
+        quality={quality}
+      />
+    </group>
+  )
+}
+
 // --- Transit and street life -------------------------------------------------
+
+// TTC-style streetcar livery: red body, white band, dark window glass and
+// roof, plus a small provider-tint roof board. Lit-car semantics are unchanged
+// (lit count = working); unlit cars park dim. Five instanced boxes share one
+// matrix update so the set costs five draws with no per-frame allocation.
 
 function Rail({ animate, litCount, tint }: { animate: boolean; litCount: number; tint: string }) {
   const time = useDrivenTime(animate)
-  const tram = useRef<THREE.InstancedMesh>(null)
+  const body = useRef<THREE.InstancedMesh>(null)
+  const band = useRef<THREE.InstancedMesh>(null)
+  const glass = useRef<THREE.InstancedMesh>(null)
+  const roof = useRef<THREE.InstancedMesh>(null)
+  const sign = useRef<THREE.InstancedMesh>(null)
   const dummy = useMemo(() => new THREE.Object3D(), [])
   const scratch = useMemo(() => new THREE.Color(), [])
   const tangent = useMemo(() => new THREE.Vector3(), [])
   const curve = useMemo(() => new THREE.CatmullRomCurve3(city.RAIL_POINTS.map(([x, y, z]) => new THREE.Vector3(x, y, z)), true, 'centripetal'), [])
   const geometry = useMemo(() => new THREE.TubeGeometry(curve, 240, 0.22, 6, true), [curve])
   useEffect(() => () => geometry.dispose(), [geometry])
+  const carGeos = useMemo(() => {
+    const make = (w: number, h: number, d: number, y: number) => {
+      const g = new THREE.BoxGeometry(w, h, d)
+      g.translate(0, y, 0)
+      return g
+    }
+    return {
+      body: make(1.7, 1.0, 5.6, -0.35),
+      band: make(1.76, 0.3, 5.66, 0.3),
+      glass: make(1.76, 0.42, 5.66, 0.66),
+      roof: make(1.6, 0.18, 5.2, 0.96),
+      sign: make(0.5, 0.1, 3.2, 1.1),
+    }
+  }, [])
+  useEffect(() => () => {
+    carGeos.body.dispose()
+    carGeos.band.dispose()
+    carGeos.glass.dispose()
+    carGeos.roof.dispose()
+    carGeos.sign.dispose()
+  }, [carGeos])
   const lit = Math.min(TRAM_TOTAL, Math.max(1, Math.floor(litCount)))
   useEffect(() => {
-    const node = tram.current
-    if (!node) return
-    for (let car = 0; car < TRAM_TOTAL; car += 1) {
-      scratch.set(car < lit ? tint : '#232a33')
-      node.setColorAt(car, scratch)
+    if (!body.current || !band.current || !glass.current || !roof.current || !sign.current) return
+    const paint = (mesh: THREE.InstancedMesh | null, litColor: string, dimColor: string) => {
+      if (!mesh) return
+      for (let car = 0; car < TRAM_TOTAL; car += 1) {
+        scratch.set(car < lit ? litColor : dimColor)
+        mesh.setColorAt(car, scratch)
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     }
-    if (node.instanceColor) node.instanceColor.needsUpdate = true
+    paint(body.current, '#b81f2d', '#232a33')
+    paint(band.current, '#f2ede2', '#3a4149')
+    paint(glass.current, '#16202c', '#10151c')
+    paint(roof.current, '#2b333d', '#14181d')
+    paint(sign.current, tint, '#1a2027')
   }, [lit, tint, scratch])
   useFrame(() => {
-    const node = tram.current
-    if (!node) return
+    const b = body.current
+    const n = band.current
+    const g = glass.current
+    const r = roof.current
+    const s = sign.current
+    if (!b || !n || !g || !r || !s) return
     for (let car = 0; car < TRAM_TOTAL; car += 1) {
       if (car < lit) {
-        const s = (((time.current / 35 - car / lit) % 1) + 1) % 1
-        curve.getPointAt(s, dummy.position)
-        curve.getTangentAt(s, tangent)
+        const u = (((time.current / 35 - car / lit) % 1) + 1) % 1
+        curve.getPointAt(u, dummy.position)
+        curve.getTangentAt(u, tangent)
         dummy.position.y += 0.5
         dummy.quaternion.setFromUnitVectors(FORWARD, tangent)
       } else {
@@ -593,9 +717,17 @@ function Rail({ animate, litCount, tint }: { animate: boolean; litCount: number;
       }
       dummy.scale.set(1, 1, 1)
       dummy.updateMatrix()
-      node.setMatrixAt(car, dummy.matrix)
+      b.setMatrixAt(car, dummy.matrix)
+      n.setMatrixAt(car, dummy.matrix)
+      g.setMatrixAt(car, dummy.matrix)
+      r.setMatrixAt(car, dummy.matrix)
+      s.setMatrixAt(car, dummy.matrix)
     }
-    node.instanceMatrix.needsUpdate = true
+    b.instanceMatrix.needsUpdate = true
+    n.instanceMatrix.needsUpdate = true
+    g.instanceMatrix.needsUpdate = true
+    r.instanceMatrix.needsUpdate = true
+    s.instanceMatrix.needsUpdate = true
   })
   return (
     <group>
@@ -607,8 +739,19 @@ function Rail({ animate, litCount, tint }: { animate: boolean; litCount: number;
         <meshStandardMaterial color="#2a2f36" roughness={0.9} />
         {city.RAIL_PILLARS.map((pillar, index) => <Instance key={index} position={[pillar.x, 3.5, pillar.z]} />)}
       </Instances>
-      <instancedMesh ref={tram} args={[undefined, undefined, TRAM_TOTAL]} castShadow>
-        <boxGeometry args={[1.7, 1.7, 5.6]} />
+      <instancedMesh ref={body} args={[undefined, undefined, TRAM_TOTAL]} castShadow geometry={carGeos.body}>
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={band} args={[undefined, undefined, TRAM_TOTAL]} geometry={carGeos.band}>
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={glass} args={[undefined, undefined, TRAM_TOTAL]} geometry={carGeos.glass}>
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={roof} args={[undefined, undefined, TRAM_TOTAL]} geometry={carGeos.roof}>
+        <meshBasicMaterial color="#ffffff" toneMapped={false} />
+      </instancedMesh>
+      <instancedMesh ref={sign} args={[undefined, undefined, TRAM_TOTAL]} geometry={carGeos.sign}>
         <meshBasicMaterial color="#ffffff" toneMapped={false} />
       </instancedMesh>
     </group>
@@ -1552,6 +1695,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
       <Archive />
       <Observatory animate={animate} />
       <Gateway />
+      <TorontoLandmarks agents={agents} paused={paused} reducedMotion={reducedMotion} quality={quality} />
 
       <Rail animate={animate} litCount={litCount} tint={tramTint ?? '#ff9b47'} />
       <Boats animate={animate} sailPort={sailPort} sailArchive={sailArchive} />
