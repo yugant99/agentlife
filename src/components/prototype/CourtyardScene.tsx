@@ -250,15 +250,31 @@ function StatsReporter({ sink, enabled }: { sink: { current: RenderStats }; enab
   const gl = useThree((state) => state.gl)
   const size = useThree((state) => state.size)
   const acc = useRef({ frames: 0, ms: 0, last: 0 })
+  // three resets gl.info on every render() call, so with the bloom composer on
+  // the panel only ever saw the final full-screen pass (1 call, 1 triangle).
+  // While enabled, accumulate across the whole frame and reset once per frame
+  // here (this runs before the frame renders), so the numbers cover every pass.
+  useEffect(() => {
+    if (!enabled) return
+    const previous = gl.info.autoReset
+    gl.info.autoReset = false
+    gl.info.reset()
+    return () => {
+      gl.info.autoReset = previous
+    }
+  }, [gl, enabled])
   useFrame((_, delta) => {
     if (!enabled) return
+    const frameCalls = gl.info.render.calls
+    const frameTriangles = gl.info.render.triangles
+    gl.info.reset()
     acc.current.frames += 1
     acc.current.ms += delta * 1000
     const now = performance.now()
     if (now - acc.current.last < 500) return
     acc.current.last = now
-    sink.current.calls = gl.info.render.calls
-    sink.current.triangles = gl.info.render.triangles
+    sink.current.calls = frameCalls
+    sink.current.triangles = frameTriangles
     sink.current.frameMs = acc.current.frames > 0 ? acc.current.ms / acc.current.frames : 0
     sink.current.width = size.width
     sink.current.height = size.height

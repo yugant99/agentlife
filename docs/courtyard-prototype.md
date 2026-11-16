@@ -30,7 +30,8 @@ two producers — the HUD shows one at a time and never mixes them.
 
 - Dev: start the normal dev server (`npm run web`) and open `/prototype.html`.
   Vite serves that standalone HTML entry, which loads `/src/prototype-main.tsx`.
-- Renderer stats are opt-in: add `?debug=1` (desktop only; hidden on mobile).
+- Renderer stats are opt-in: add `?debug=1` (desktop only; hidden on mobile). The counts
+  cover every render pass in a frame (scene, shadows, bloom), not just the last one.
 - If WebGL cannot start, a plain fallback message is shown and the roster/inspector stay
   usable because they are HTML, not canvas.
 
