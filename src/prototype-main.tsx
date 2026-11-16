@@ -21,7 +21,8 @@ import {
 } from './components/prototype/tour'
 import type { TourState } from './components/prototype/tour'
 import {
-  SHOWCASE_RESUME_MS, STORY_BEATS, STORY_START_STEP, parseShowcaseFlag, showcaseQuality, showcaseShot, storyShot,
+  SHOWCASE_RESUME_MS, STORY_BEATS, STORY_START_STEP, parseShowcaseFlag, showcaseCastState, showcaseQuality, showcaseShot,
+  storyShot,
 } from './components/prototype/showcase'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
@@ -110,21 +111,24 @@ function PrototypeApp() {
   // The active producer's snapshot. Simulation is memoized on scenario steps so
   // selection and camera moves never rebuild worker identity; live snapshots
   // arrive from the feed hook. Never mix the two.
-  const simSnapshot = useMemo(() => toCitySnapshot(state, Date.now()), [state])
+  // Showcase relabels the simulated cast as Claude Code / Codex / OpenCode agents
+  // (showcase.ts); scenario mechanics are unchanged.
+  const castState = useMemo(() => (showcase ? showcaseCastState(state) : state), [state, showcase])
+  const simSnapshot = useMemo(() => toCitySnapshot(castState, Date.now()), [castState])
   const agents = isLive && liveSnapshot ? liveSnapshot.agents : simSnapshot.agents
   const lastEvent = isLive && liveSnapshot
     ? `Live feed · ${liveSnapshot.agents.length} ${liveSnapshot.agents.length === 1 ? 'agent' : 'agents'} · snapshot ${new Date(liveSnapshot.generatedAt).toLocaleTimeString()}`
-    : state.lastEvent
+    : castState.lastEvent
   const celebrationBy = useMemo(() => {
     if (isLive) return {}
     const map: Record<string, number> = {}
-    const byNative = new Map(state.agents.map((agent) => [agent.id, agent]))
-    for (const celebration of state.celebrations) {
+    const byNative = new Map(castState.agents.map((agent) => [agent.id, agent]))
+    for (const celebration of castState.celebrations) {
       const agent = byNative.get(celebration.agentId)
       if (agent) map[`${agent.provider}:${agent.id}`] = celebration.id
     }
     return map
-  }, [state, isLive])
+  }, [castState, isLive])
   // Single truth definition: lit tram cars read cityCounts.working; the tint
   // follows the majority provider among fresh workers.
   const counts = useMemo(() => cityCounts(agents), [agents])

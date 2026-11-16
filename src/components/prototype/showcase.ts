@@ -8,6 +8,7 @@
 // and ends the story; the drift resumes after a short idle. Reload to replay.
 
 import type { CameraShot, QualityTier } from './sceneControl.ts'
+import type { ScenarioAgent } from './scenario.ts'
 import { distanceForStop, positionFor, targetForStop } from './tour.ts'
 
 /** Vertical field of view of the scene camera, in degrees. */
@@ -199,5 +200,64 @@ export function storyShot(index: number, seq: number): CameraShot {
     position: [...beat.shot.position],
     target: [...beat.shot.target],
     durationMs: beat.shot.durationMs,
+  }
+}
+
+// --- Showcase cast ------------------------------------------------------------
+//
+// The simulated day ships with a mythic cast (Sigrid, Bjorn, ...) on purpose, but
+// a recording should show what the city is for: Claude Code, Codex and OpenCode
+// agents. In showcase the shell relabels the simulated agents and the event line
+// before they reach the scene and HUD. Still synthetic data: no live sessions,
+// no real workspace names. Scenario mechanics (who walks where, when) are
+// unchanged; only names, roles, providers and wording change.
+
+export interface ShowcaseCastEntry {
+  name: string
+  role: string
+  provider: ScenarioAgent['provider']
+}
+
+export const SHOWCASE_WORKSPACE = 'mythic-city'
+
+export const SHOWCASE_CAST: Readonly<Record<string, ShowcaseCastEntry>> = {
+  sigrid: { name: 'Claude Code', role: 'Schema migration', provider: 'claude-code' },
+  astrid: { name: 'Claude Code · release', role: 'Release notes', provider: 'claude-code' },
+  bjorn: { name: 'Codex', role: 'Test runner', provider: 'codex' },
+  loom: { name: 'Codex sub-agent', role: 'Fixture search', provider: 'codex' },
+  halvard: { name: 'Codex · old run', role: 'Archived run', provider: 'codex' },
+  eirik: { name: 'OpenCode', role: 'Parser refactor', provider: 'opencode' },
+  yrsa: { name: 'OpenCode · docs', role: 'Docs sweep', provider: 'opencode' },
+}
+
+export const SHOWCASE_EVENT_LABELS: Readonly<Record<string, string>> = {
+  'Scenario started — five agents checked in.': 'Five agents checked in: Claude Code, Codex and OpenCode.',
+  'Astrid received the human call and raised the banner.': 'Claude Code (release) got your answer and resumed.',
+  'Astrid paused the run — a second decision is needed.': 'Claude Code (release) paused — it needs a second decision.',
+  'Astrid resumed after the call was made.': 'Claude Code (release) resumed after your call.',
+  'Astrid completed the banner run.': 'Claude Code (release) finished the release notes.',
+  'Eirik checked in and asks for a schema call.': 'OpenCode checked in and asks about the parser API.',
+  'Eirik received the call and started forging.': 'OpenCode got your answer and started refactoring.',
+  "Eirik's snapshot went stale — work is paused, not counted.": 'OpenCode went quiet — paused, not counted.',
+  "Eirik's snapshot recovered and work resumed.": 'OpenCode is back and refactoring again.',
+  'Sigrid completed the planning pass.': 'Claude Code finished reading the schema.',
+  'Bjorn switched to the test bench — walking to the Observatory.': 'Codex started the test suite — walking to the Observatory.',
+  'Yrsa arrived through the Gateway arch.': 'OpenCode (docs) arrived through the Gateway.',
+  'Astrid shipped the banner run — a boat leaves the Port.': 'Claude Code (release) shipped v0.3 — a boat leaves the Port.',
+  'Bjorn looped in a sub-agent beside the bench.': 'Codex spun up a sub-agent to search fixtures.',
+  'Sigrid needs a human call — waiting on the Citadel steps.': 'Claude Code needs you: approve the schema migration?',
+  "Eirik's snapshot went stale — sitting down.": 'OpenCode went quiet — sitting down.',
+  'Halvard archived to past — walking out the Gateway.': 'An old Codex run was archived — walking out the Gateway.',
+}
+
+/** Relabel the simulated day for showcase (names, roles, providers, event line). */
+export function showcaseCastState<S extends { agents: readonly ScenarioAgent[]; lastEvent: string }>(state: S): S {
+  return {
+    ...state,
+    agents: state.agents.map((agent) => {
+      const cast = SHOWCASE_CAST[agent.id]
+      return cast ? { ...agent, ...cast, workspace: SHOWCASE_WORKSPACE } : agent
+    }),
+    lastEvent: SHOWCASE_EVENT_LABELS[state.lastEvent] ?? state.lastEvent,
   }
 }

@@ -13,6 +13,8 @@ import {
   SHOWCASE_MAX_POLAR,
   SHOWCASE_POSES,
   SHOWCASE_SHOT_MS,
+  SHOWCASE_CAST,
+  SHOWCASE_EVENT_LABELS,
   STORY_BEATS,
   STORY_START_STEP,
   STORY_TOTAL_MS,
@@ -20,11 +22,13 @@ import {
   parseShowcaseFlag,
   polarAngle,
   showcaseQuality,
+  showcaseCastState,
   showcaseShot,
   storyBeatStarts,
   storyShot,
 } from './showcase.ts'
-import { DWELL_MS, SCENARIO_STEPS } from './scenario.ts'
+import { DWELL_MS, SCENARIO_STEPS, advanceScenario, resetScenario } from './scenario.ts'
+import { toCitySnapshot } from './scenarioBridge.ts'
 import { placementFor } from './toronto.ts'
 import { LANDMARKS } from './landmarks/landmarkTypes.ts'
 import { HERO_CELL, HERO_HEIGHT, HERO_SPIRE_HEIGHT, MAIN_PARTS, PODIUM_PARTS, UPPER_PARTS } from './city.ts'
@@ -220,4 +224,53 @@ test('no fixed story shot looks through, or glides through, a building or landma
   // After the story the drift glides from the dashboard to the first skyline pose.
   const last = STORY_BEATS[STORY_BEATS.length - 1]
   assert.equal(firstHit(last.shot.position, SHOWCASE_POSES[0].position, boxes), null)
+})
+
+// --- Showcase cast -----------------------------------------------------------
+
+test('every simulated agent is recast as a Claude Code, Codex or OpenCode agent', () => {
+  let day = resetScenario()
+  const ids = new Set(day.agents.map((agent) => agent.id))
+  for (let step = 1; step < SCENARIO_STEPS.length; step += 1) {
+    day = advanceScenario(day)
+    for (const agent of day.agents) ids.add(agent.id)
+  }
+  for (const id of ids) assert.ok(SHOWCASE_CAST[id], `no showcase cast for ${id}`)
+  const providers = new Set(Object.values(SHOWCASE_CAST).map((entry) => entry.provider))
+  for (const provider of ['claude-code', 'codex', 'opencode']) assert.ok(providers.has(provider), `no ${provider} agent`)
+  // The agent that needs you in the story is Claude Code.
+  assert.equal(SHOWCASE_CAST.sigrid.provider, 'claude-code')
+})
+
+test('every event line is relabeled and no mythic name reaches the clip', () => {
+  const mythic = /Sigrid|Bjorn|Astrid|Eirik|Halvard|Yrsa|Loom|banner|forging|harbor call/
+  for (const step of SCENARIO_STEPS) {
+    const relabeled = SHOWCASE_EVENT_LABELS[step.label]
+    assert.ok(relabeled, `no showcase label for "${step.label}"`)
+    assert.ok(!mythic.test(relabeled), `mythic wording left in "${relabeled}"`)
+  }
+  for (const entry of Object.values(SHOWCASE_CAST)) assert.ok(!mythic.test(entry.name + entry.role))
+})
+
+test('recasting keeps scenario mechanics and parent links, and leaves the source state alone', () => {
+  let day = resetScenario()
+  for (let step = 0; step < 13; step += 1) day = advanceScenario(day)
+  const cast = showcaseCastState(day)
+  assert.equal(cast.agents.length, day.agents.length)
+  cast.agents.forEach((agent, i) => {
+    const original = day.agents[i]
+    assert.equal(agent.id, original.id)
+    assert.equal(agent.workState, original.workState)
+    assert.equal(agent.toolKind, original.toolKind)
+    assert.equal(agent.station, original.station)
+    assert.equal(agent.workspace, 'mythic-city')
+  })
+  // Loom (sub-agent) keeps pointing at Bjorn, now a Codex agent.
+  const snapshot = toCitySnapshot(cast, 0)
+  const loom = snapshot.agents.find((agent) => agent.name === 'Codex sub-agent')
+  const codex = snapshot.agents.find((agent) => agent.name === 'Codex')
+  assert.ok(loom && codex)
+  assert.equal(loom.parentId, codex.id)
+  assert.equal(SHOWCASE_EVENT_LABELS[day.lastEvent], cast.lastEvent)
+  assert.notEqual(day.agents.find((agent) => agent.id === 'sigrid').name, 'Claude Code')
 })
