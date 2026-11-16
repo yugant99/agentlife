@@ -27,7 +27,7 @@ import {
 import { DWELL_MS, SCENARIO_STEPS } from './scenario.ts'
 import { placementFor } from './toronto.ts'
 import { LANDMARKS } from './landmarks/landmarkTypes.ts'
-import { HERO_CELL, HERO_HEIGHT, HERO_SPIRE_HEIGHT } from './city.ts'
+import { HERO_CELL, HERO_HEIGHT, HERO_SPIRE_HEIGHT, MAIN_PARTS, PODIUM_PARTS, UPPER_PARTS } from './city.ts'
 
 test('flag parsing: only showcase=1 turns it on', () => {
   assert.equal(parseShowcaseFlag('?showcase=1'), true)
@@ -140,15 +140,6 @@ const beatWindow = (name) => {
   return { start: starts[index], arrive: starts[index] + STORY_BEATS[index].shot.durationMs, end: starts[index] + STORY_BEATS[index].holdMs }
 }
 
-test('the story starts the day just before the first walk to the test bench', () => {
-  const walk = firstStepAfterStart((step) => step.changes.some((change) => change.toolKind === 'test'))
-  assert.equal(walk, STORY_START_STEP + 1)
-  // The walk shot is up while the worker crosses the city (4-10 s walk).
-  const { arrive, end } = beatWindow('walk')
-  assert.ok(arrive <= stepTime(walk) + 10000, 'walk shot arrives after the worker already got there')
-  assert.ok(end >= stepTime(walk) + 4000, 'walk shot leaves before the worker can arrive')
-})
-
 test('the ship beat is framed while the freighter is still sailing', () => {
   const ship = firstStepAfterStart((step) => Boolean(step.ship))
   assert.ok(ship > STORY_START_STEP)
@@ -163,7 +154,7 @@ test('the needs-you beat is up before the call and holds while the agent walks o
   assert.ok(needs > STORY_START_STEP)
   const beat = STORY_BEATS.find((b) => b.name === 'needs-you')
   assert.equal(beat.hud, true)
-  assert.equal(beat.selectNeedsYou, true)
+  assert.equal(beat.follow, 'needs-you')
   const { start, end } = beatWindow('needs-you')
   assert.ok(start <= stepTime(needs), 'needs-you shot starts after the call')
   assert.ok(end >= stepTime(needs) + 10000, 'needs-you shot ends before a 10 s walk to the Citadel finishes')
@@ -183,4 +174,50 @@ test('story shape: skyline first, dashboard last, HUD only for the payoff, about
   for (const beat of STORY_BEATS) {
     assert.ok(polarAngle({ position: beat.shot.position, target: beat.shot.target }) <= SHOWCASE_MAX_POLAR, `${beat.name} would be clamped`)
   }
+})
+
+// Solid boxes the camera must never pass through: every building part and every
+// landmark's footprint up to its height (a generous box for the thin CN Tower).
+function obstacles() {
+  const boxes = [...PODIUM_PARTS, ...MAIN_PARTS, ...UPPER_PARTS].map((p) => ({
+    x0: p.x - p.w / 2, x1: p.x + p.w / 2, z0: p.z - p.d / 2, z1: p.z + p.d / 2, top: p.y0 + p.h, name: `building ${p.x},${p.z}`,
+  }))
+  for (const spec of LANDMARKS) {
+    const place = placementFor(spec.id)
+    const hw = (spec.footprint.w * place.scale) / 2
+    const hd = (spec.footprint.d * place.scale) / 2
+    boxes.push({ x0: place.x - hw, x1: place.x + hw, z0: place.z - hd, z1: place.z + hd, top: spec.height * place.scale, name: spec.id })
+  }
+  return boxes
+}
+
+function firstHit(from, to, boxes) {
+  for (let i = 0; i <= 400; i += 1) {
+    const s = i / 400
+    const p = from.map((v, k) => v + (to[k] - v) * s)
+    const hit = boxes.find((b) => p[0] > b.x0 && p[0] < b.x1 && p[2] > b.z0 && p[2] < b.z1 && p[1] < b.top)
+    if (hit) return `${hit.name} at ${p.map((v) => v.toFixed(1)).join(',')}`
+  }
+  return null
+}
+
+test('no fixed story shot looks through, or glides through, a building or landmark', () => {
+  const boxes = obstacles()
+  const fixed = STORY_BEATS.filter((b) => b.follow === 'none')
+  for (const beat of fixed) {
+    const hit = firstHit(beat.shot.position, beat.shot.target, boxes)
+    assert.equal(hit, null, `${beat.name}: view blocked by ${hit}`)
+  }
+  // Glides between consecutive fixed beats (the needs-you beat hands off to the
+  // scene's agent view, whose slot only the scene knows).
+  for (let i = 1; i < STORY_BEATS.length; i += 1) {
+    const prev = STORY_BEATS[i - 1]
+    const next = STORY_BEATS[i]
+    if (prev.follow !== 'none' || next.follow !== 'none') continue
+    const hit = firstHit(prev.shot.position, next.shot.position, boxes)
+    assert.equal(hit, null, `${prev.name} -> ${next.name} glides through ${hit}`)
+  }
+  // After the story the drift glides from the dashboard to the first skyline pose.
+  const last = STORY_BEATS[STORY_BEATS.length - 1]
+  assert.equal(firstHit(last.shot.position, SHOWCASE_POSES[0].position, boxes), null)
 })

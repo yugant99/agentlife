@@ -2,8 +2,8 @@
 // three.js, no React, so plain Node tests can load it. The shell hides the HUD,
 // pins a steady quality tier and stays on the simulated day (no live workspace
 // names on screen). On load it plays a ~45 s story once (STORY_BEATS: skyline,
-// a worker walking to the test bench, a ship leaving the Port, an agent needing
-// you, the dashboard), then settles into a slow camera drift between skyline
+// the Toronto waterfront as a ship leaves the Port, an agent needing you, the
+// dashboard), then settles into a slow camera drift between skyline
 // poses that put the black hole in frame. Any user input releases the camera
 // and ends the story; the drift resumes after a short idle. Reload to replay.
 
@@ -133,15 +133,18 @@ export function directionInView(pose: ShowcasePose, direction: readonly [number,
 export const STORY_START_STEP = 9
 
 export interface StoryBeat {
-  name: 'skyline' | 'skyline-drift' | 'walk' | 'ship' | 'rise' | 'needs-you' | 'dashboard'
+  name: 'skyline' | 'skyline-drift' | 'ship' | 'rise' | 'needs-you' | 'dashboard'
   /** Camera move for the beat (glide length is durationMs). */
   shot: Omit<CameraShot, 'id'>
   /** Time from this beat's start to the next beat's start. */
   holdMs: number
   /** HUD and district tags visible during the beat. */
   hud: boolean
-  /** Select the agent that needs you as soon as one appears (inspector shows why). */
-  selectNeedsYou: boolean
+  /**
+   * 'needs-you': hand the camera to the scene's agent view for the agent waiting
+   * on you as soon as one exists (the inspector says why while the HUD is up).
+   */
+  follow: 'none' | 'needs-you'
 }
 
 function stopShot(stop: Parameters<typeof targetForStop>[0], durationMs: number): Omit<CameraShot, 'id'> {
@@ -149,10 +152,11 @@ function stopShot(stop: Parameters<typeof targetForStop>[0], durationMs: number)
   return { position: positionFor(target, distanceForStop(stop)), target, durationMs }
 }
 
-// Port beat: from south-west of the harbor looking north-east, so the departing
-// freighter (dock -54,44 -> exit -69,58) sits centre with the CN Tower and
-// Rogers Centre behind it.
-const SHIP_SHOT: Omit<CameraShot, 'id'> = { position: [-85, 25, 95], target: [-55, 8, 45], durationMs: 3000 }
+// Port beat: the waterfront from south-west of the harbor looking north-east:
+// piers, the departing freighter (dock -54,44 -> exit -69,58), Rogers Centre and
+// the CN Tower. Far enough south that glides into and out of it stay clear of
+// the CN Tower.
+const SHIP_SHOT: Omit<CameraShot, 'id'> = { position: [-80, 28, 112], target: [-55, 8, 45], durationMs: 3000 }
 
 // Rise beat: the camera lifts high over the city before diving to the Citadel,
 // so the glide from the harbor never cuts through roofs (moves are straight
@@ -165,13 +169,12 @@ const RISE_SHOT: Omit<CameraShot, 'id'> = { position: [0, 70, 75], target: [0, 2
 // beam. A fixed shot can't do this: the agent's slot is only known in the scene.
 
 export const STORY_BEATS: readonly StoryBeat[] = [
-  { name: 'skyline', shot: { ...SHOWCASE_POSES[0], durationMs: 4500 }, holdMs: 4500, hud: false, selectNeedsYou: false },
-  { name: 'skyline-drift', shot: { ...SHOWCASE_POSES[1], durationMs: 5000 }, holdMs: 5000, hud: false, selectNeedsYou: false },
-  { name: 'walk', shot: stopShot({ kind: 'district', districtId: 'observatory' }, 3000), holdMs: 6500, hud: false, selectNeedsYou: false },
-  { name: 'ship', shot: SHIP_SHOT, holdMs: 7800, hud: false, selectNeedsYou: false },
-  { name: 'rise', shot: RISE_SHOT, holdMs: 2000, hud: false, selectNeedsYou: false },
-  { name: 'needs-you', shot: { ...RISE_SHOT, durationMs: 400 }, holdMs: 12500, hud: true, selectNeedsYou: true },
-  { name: 'dashboard', shot: stopShot({ kind: 'city' }, 3500), holdMs: 6500, hud: true, selectNeedsYou: false },
+  { name: 'skyline', shot: { ...SHOWCASE_POSES[0], durationMs: 4500 }, holdMs: 4500, hud: false, follow: 'none' },
+  { name: 'skyline-drift', shot: { ...SHOWCASE_POSES[1], durationMs: 8000 }, holdMs: 8000, hud: false, follow: 'none' },
+  { name: 'ship', shot: SHIP_SHOT, holdMs: 11300, hud: false, follow: 'none' },
+  { name: 'rise', shot: RISE_SHOT, holdMs: 2000, hud: false, follow: 'none' },
+  { name: 'needs-you', shot: { ...RISE_SHOT, durationMs: 400 }, holdMs: 12500, hud: true, follow: 'needs-you' },
+  { name: 'dashboard', shot: stopShot({ kind: 'city' }, 3500), holdMs: 6500, hud: true, follow: 'none' },
 ]
 
 /** Total story length before the skyline drift takes over. */

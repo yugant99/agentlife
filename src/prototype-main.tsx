@@ -276,7 +276,7 @@ function PrototypeApp() {
     storySeq.current += 1
     setShot(storyShot(storyBeat, storySeq.current))
     setHudVisible(beat.hud)
-    if (!beat.selectNeedsYou) {
+    if (beat.follow === 'none') {
       // Shots own the camera, so these only clear the inspector and tags.
       setSelectedId(undefined)
       setView((current) => (current.scale === 'city' ? current : { scale: 'city' }))
@@ -356,12 +356,12 @@ function PrototypeApp() {
     setFocusRevision((value) => value + 1)
   }, [])
 
-  // During the needs-you beat, as soon as an agent needs you, hand the camera to
-  // the scene's agent view: release the story shot, then select the agent (one
-  // tick later, after the rig has taken control back) so the camera glides to
-  // their Citadel slot and the inspector says who is waiting and why.
+  // Needs-you beat: as soon as an agent needs you, hand the camera to the scene's
+  // agent view: release the story shot, then select the agent one tick later
+  // (after the rig has taken control back) so the camera glides to their Citadel
+  // slot and the inspector says who is waiting and why.
   useEffect(() => {
-    if (storyBeat === null || !STORY_BEATS[storyBeat].selectNeedsYou || selectedId) return
+    if (storyBeat === null || selectedId || STORY_BEATS[storyBeat].follow !== 'needs-you') return
     const next = nextAttentionCity(agents, undefined)
     if (!next) return
     setShot((current) => (current && current.id.startsWith('showcase-') ? null : current))
@@ -426,7 +426,7 @@ function PrototypeApp() {
   }, [escape, bumpActivity, showcase])
 
   return (
-    <main className="proto-app" onPointerDown={bumpActivity}>
+    <main className="proto-app" onPointerDown={bumpActivity} data-story-beat={storyBeat === null ? undefined : STORY_BEATS[storyBeat].name}>
       {webgl ? (
         <SceneBoundary
           onError={handleReady}
