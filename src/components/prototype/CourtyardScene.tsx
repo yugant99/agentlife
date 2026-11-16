@@ -89,7 +89,8 @@ function useDrivenTime(animate: boolean) {
 }
 
 // Buildings are assembled from instanced archetype layers (podium / main / upper)
-// with a shared 256x512 facade atlas (map + emissiveMap, flat-colour fallback),
+// with a shared 512x1024 window atlas fitted per part (map + emissiveMap,
+// facadeTexture.ts; flat-colour fallback),
 // per-district emissive window panels, solid roof caps plus one instanced
 // district-tinted parapet/trim mesh, spires, and a hero crown above its lattice cell.
 
@@ -999,8 +1000,9 @@ function DistrictWindows({ counts, frozen, reducedMotion }: { counts: Record<Dis
   )
 }
 
-// Fewer, smaller lit windows than the old half-lit checker, so each glows a bit more.
-const FACADE_EMISSIVE_INTENSITY = 0.4
+// Static decor glow. Kept below DistrictWindows' idle level (0.35) so the live
+// per-district glow (0.65+ with a worker) stays the brighter, truthful signal.
+const FACADE_EMISSIVE_INTENSITY = 0.24
 
 // World-space facade UVs + plain-wall roofs (see facadeTexture.ts). Module-level
 // so every shell layer shares one compiled program.

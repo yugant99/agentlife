@@ -25,11 +25,12 @@ import {
   FACADE_GRID_COLS,
   FACADE_GRID_ROWS,
   FACADE_LIT_RATIO,
-  FACADE_TILE_WORLD_H,
-  FACADE_TILE_WORLD_W,
+  FACADE_MIN_WINDOW_PART_H,
   FACADE_WALL,
   clampLitRatio,
   describeFacadeAtlas,
+  facadeBays,
+  facadeFloors,
   facadeUvAt,
   hexToLinearRgb,
   litRatioForActiveCount,
@@ -38,7 +39,7 @@ import {
   patchFacadeShader,
   windowRect,
 } from './facadeTexture.ts'
-import { MAIN_PARTS, PODIUM_PARTS } from './city.ts'
+import { MAIN_PARTS, PODIUM_PARTS, UPPER_PARTS } from './city.ts'
 
 function makeFakeFactory(record) {
   return (w, h) => {
@@ -164,34 +165,71 @@ test('paint uses the injected factory and degrades to null without a canvas', ()
 
 // --- World mapping -----------------------------------------------------------
 
-test('world mapping gives every facade the same window size, whatever its box size', () => {
-  assert.equal(FACADE_TILE_WORLD_W, FACADE_BAY_WORLD_W * FACADE_GRID_COLS)
-  assert.equal(FACADE_TILE_WORLD_H, FACADE_FLOOR_WORLD_H * FACADE_GRID_ROWS)
-  // One bay along a wall and one floor up both move exactly one atlas cell.
-  const base = facadeUvAt([3, 1, 5], [0, 0, 1])
-  const nextBay = facadeUvAt([3 + FACADE_BAY_WORLD_W, 1, 5], [0, 0, 1])
-  const nextFloor = facadeUvAt([3, 1 + FACADE_FLOOR_WORLD_H, 5], [0, 0, 1])
-  assert.ok(Math.abs(nextBay[0] - base[0] - 1 / FACADE_GRID_COLS) < 1e-9)
-  assert.ok(Math.abs(nextFloor[1] - base[1] - 1 / FACADE_GRID_ROWS) < 1e-9)
-  // Walls facing x run along z; walls facing z run along x.
-  assert.equal(facadeUvAt([7, 2, 11], [1, 0, 0])[0], 11 / FACADE_TILE_WORLD_W)
-  assert.equal(facadeUvAt([7, 2, 11], [0, 0, -1])[0], 7 / FACADE_TILE_WORLD_W)
-  // Roofs get no window UV (plain wall).
-  assert.equal(facadeUvAt([0, 10, 0], [0, 1, 0]), null)
+const ALL_PARTS = [...PODIUM_PARTS, ...MAIN_PARTS, ...UPPER_PARTS]
+const nearInteger = (value) => Math.abs(value - Math.round(value)) < 1e-6
+
+test('floors and bays fit whole numbers to each part; too-short parts are plain wall', () => {
+  assert.equal(facadeFloors(0.9), 0)
+  assert.equal(facadeFloors(FACADE_MIN_WINDOW_PART_H - 0.01), 0)
+  assert.equal(facadeFloors(FACADE_MIN_WINDOW_PART_H), 1)
+  assert.equal(facadeFloors(3.6), 1)
+  assert.equal(facadeFloors(34), 13)
+  assert.equal(facadeFloors(Number.NaN), 0)
+  assert.equal(facadeBays(0.5), 1)
+  assert.equal(facadeBays(5.8), 3)
+  assert.equal(facadeBays(Number.NaN), 1)
 })
 
-test('real building parts get sensible window counts (no slits, no giant panes)', () => {
-  // Old mapping stretched 4x8 windows over every face: a 3.6-tall podium got
-  // 8 floors of 0.45 and a 34-tall block got 8 floors of 4.25. Now floors are
-  // fixed, so floor count tracks height and bays track width.
-  for (const part of [...PODIUM_PARTS, ...MAIN_PARTS]) {
-    const floors = part.h / FACADE_FLOOR_WORLD_H
-    const bays = part.w / FACADE_BAY_WORLD_W
-    assert.ok(Math.abs(floors - part.h / 2.6) < 1e-9)
-    assert.ok(bays >= 1, `part ${part.x},${part.z} narrower than one bay (${part.w})`)
+test('every real part shows whole windows: cell edges at its corners, base and roof line', () => {
+  for (const part of ALL_PARTS) {
+    const top = part.y0 + part.h
+    const front = [0, 0, 1]
+    const side = [1, 0, 0]
+    const corners = [
+      [part.x - part.w / 2, part.y0, part.z + part.d / 2],
+      [part.x + part.w / 2, top, part.z + part.d / 2],
+    ]
+    const floors = facadeFloors(part.h)
+    if (floors === 0) {
+      for (const point of corners) assert.equal(facadeUvAt(point, front, part), null, `short part ${part.x},${part.z} got windows`)
+      continue
+    }
+    for (const point of corners) {
+      const [u, v] = facadeUvAt(point, front, part)
+      assert.ok(nearInteger(u * FACADE_GRID_COLS), `part ${part.x},${part.z}: corner cuts a bay (u ${u})`)
+      assert.ok(nearInteger(v * FACADE_GRID_ROWS), `part ${part.x},${part.z}: base or roof cuts a floor (v ${v})`)
+    }
+    // The side wall runs along z and is fitted to the part's depth.
+    const sideCorner = facadeUvAt([part.x + part.w / 2, top, part.z - part.d / 2], side, part)
+    assert.ok(nearInteger(sideCorner[0] * FACADE_GRID_COLS))
+    // Fitted floors stay close to the target height: no slits, no giant panes.
+    const floorH = part.h / floors
+    assert.ok(floorH >= 1.7 && floorH <= 3.9, `part ${part.x},${part.z}: floor ${floorH.toFixed(2)} tall`)
   }
-  const tallest = Math.max(...MAIN_PARTS.map((p) => p.h))
-  assert.ok(tallest / FACADE_FLOOR_WORLD_H > 10, 'tall blocks should read as many floors')
+})
+
+test('the old stretch is gone: tall blocks get many floors, podiums one', () => {
+  // The 4x8 stretch gave a 3.6-tall podium 8 floors of 0.45 and a 34-tall
+  // block 8 floors of 4.25.
+  const tallest = MAIN_PARTS.reduce((best, p) => (p.h > best.h ? p : best))
+  assert.ok(facadeFloors(tallest.h) >= 12)
+  for (const podium of PODIUM_PARTS) {
+    const floors = facadeFloors(podium.h)
+    assert.ok(floors === 1 || floors === 2, `podium ${podium.h} got ${floors} floors`)
+  }
+  // Roofs always paint plain wall.
+  assert.equal(facadeUvAt([0, 10, 0], [0, 1, 0], tallest), null)
+})
+
+test('neighbouring parts start at different slices of the atlas', () => {
+  const windowed = MAIN_PARTS.filter((part) => facadeFloors(part.h) > 0)
+  const starts = new Set(
+    windowed.map((part) => {
+      const [u, v] = facadeUvAt([part.x - part.w / 2, part.y0, part.z + part.d / 2], [0, 0, 1], part)
+      return `${Math.round(u * FACADE_GRID_COLS)},${Math.round(v * FACADE_GRID_ROWS)}`
+    }),
+  )
+  assert.ok(starts.size >= windowed.length / 3, `only ${starts.size} distinct starts for ${windowed.length} parts`)
 })
 
 test('the shader patch maps both textures, flattens roofs and degrades safely', () => {
@@ -205,7 +243,9 @@ test('the shader patch maps both textures, flattens roofs and degrades safely', 
   assert.ok(shader.vertexShader.includes('vMapUv = facadeUv;'))
   assert.ok(shader.vertexShader.includes('vEmissiveMapUv = facadeUv;'))
   assert.ok(shader.vertexShader.includes('instanceMatrix'))
-  assert.ok(shader.vertexShader.includes(`/ ${FACADE_TILE_WORLD_W}.0`))
+  assert.ok(shader.vertexShader.includes(`/ ${FACADE_FLOOR_WORLD_H}`))
+  assert.ok(shader.vertexShader.includes(`>= ${FACADE_MIN_WINDOW_PART_H}`))
+  assert.ok(shader.vertexShader.includes(`/ ${FACADE_BAY_WORLD_W}.0`))
   assert.ok(!shader.fragmentShader.includes('#include <map_fragment>'))
   assert.ok(!shader.fragmentShader.includes('#include <emissivemap_fragment>'))
   assert.ok(shader.fragmentShader.includes('vFacadeRoof'))

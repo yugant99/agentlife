@@ -9,24 +9,23 @@
 // null when no canvas factory is available, and the scene falls back to flat
 // colour.
 //
-// Mapping: the atlas repeats in world space (one bay = FACADE_BAY_WORLD_W wide,
-// one floor = FACADE_FLOOR_WORLD_H tall), so every building gets same-sized
-// windows and each one shows a different slice of the pattern. Roofs show
-// plain wall. The GLSL lives in patchFacadeShader; facadeUvAt mirrors it in
-// JS for tests.
+// Mapping: each building part fits a whole number of window bays (about
+// FACADE_BAY_WORLD_W wide) across every wall and whole floors (about
+// FACADE_FLOOR_WORLD_H tall) up, starting at a per-part offset into the
+// repeating atlas. Windows stay near one size on every building, never get cut
+// at a corner or roof edge, and neighbours show different slices of the
+// pattern. Roofs and parts too short for a floor show plain wall. The GLSL
+// lives in patchFacadeShader; facadeUvAt mirrors it in JS for tests.
 
 export const FACADE_ATLAS_WIDTH = 512
 export const FACADE_ATLAS_HEIGHT = 1024
 export const FACADE_GRID_COLS = 8
 export const FACADE_GRID_ROWS = 16
 
-/** World width of one window bay. */
+/** Target world width of one window bay. */
 export const FACADE_BAY_WORLD_W = 2.0
-/** World height of one floor. */
+/** Target world height of one floor. */
 export const FACADE_FLOOR_WORLD_H = 2.6
-/** World size of one full atlas repeat. */
-export const FACADE_TILE_WORLD_W = FACADE_BAY_WORLD_W * FACADE_GRID_COLS
-export const FACADE_TILE_WORLD_H = FACADE_FLOOR_WORLD_H * FACADE_GRID_ROWS
 
 /** Share of windows lit in the static atlas (live glow stays in DistrictWindows). */
 export const FACADE_LIT_RATIO = 0.3
@@ -143,10 +142,9 @@ function shuffled(count: number, random: () => number): number[] {
 /**
  * Grid layout for an atlas. Exactly round(ratio * cols*rows) cells are lit,
  * spread evenly over floors (each floor gets its share, +1 on a few) and
- * scattered within each floor by a seeded shuffle. Floors line up across the
- * whole city in world space, so a fully dark atlas row would draw a dark band
- * at the same height on every building. Tones and blinds come from the same
- * seed: deterministic per cell.
+ * scattered within each floor by a seeded shuffle, so no slice of the atlas a
+ * short building shows is a fully dark band. Tones and blinds come from the
+ * same seed: deterministic per cell.
  */
 export function describeFacadeAtlas(litRatio: number): FacadeCell[] {
   const ratio = clampLitRatio(litRatio)
@@ -269,20 +267,70 @@ export function paintFacadeEmissiveMap(
   }
 }
 
-// --- World mapping --------------------------------------------------------------
+// --- Per-part mapping -------------------------------------------------------------
+
+/** Parts shorter than this paint plain wall: too short for a whole floor. */
+export const FACADE_MIN_WINDOW_PART_H = 1.8
+
+/** A building part as the scene instances it: a unit box scaled and centred. */
+export interface FacadePart {
+  x: number
+  z: number
+  y0: number
+  w: number
+  h: number
+  d: number
+}
+
+/** Whole floors fitted to a part's height (0 means plain wall). */
+export function facadeFloors(height: number): number {
+  if (!(height >= FACADE_MIN_WINDOW_PART_H)) return 0
+  return Math.max(1, Math.round(height / FACADE_FLOOR_WORLD_H))
+}
+
+/** Whole window bays fitted to a wall's width (at least one). */
+export function facadeBays(width: number): number {
+  if (!(width > 0)) return 1
+  return Math.max(1, Math.round(width / FACADE_BAY_WORLD_W))
+}
+
+// Per-part offset into the atlas, in whole cells, so neighbours show different
+// slices. Mirrors the GLSL hash (results can differ in the last float bits
+// between JS and the GPU; only the "whole cells" property matters).
+function partPhase(x: number, z: number): [number, number] {
+  const raw = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453
+  const h = raw - Math.floor(raw)
+  const h2raw = h * 7.31
+  const h2 = h2raw - Math.floor(h2raw)
+  return [Math.floor(h * FACADE_GRID_COLS), Math.floor(h2 * FACADE_GRID_ROWS)]
+}
 
 /**
- * Atlas UV for a point on a facade, mirroring the GLSL in patchFacadeShader.
- * Walls facing ±x run along z, walls facing ±z run along x; v climbs with height
- * from the ground. Roofs (|normal.y| > 0.5) return null: they paint plain wall.
+ * Atlas UV for a point on a part's facade, mirroring the GLSL in
+ * patchFacadeShader. Each wall fits a whole number of bays across and floors
+ * up, so windows never get cut at a corner or under a roof edge; window size
+ * stays near FACADE_BAY_WORLD_W x FACADE_FLOOR_WORLD_H. Walls facing ±x run
+ * along z, walls facing ±z run along x. Roofs, floors and parts too short for
+ * a floor return null: they paint plain wall.
  */
 export function facadeUvAt(
   world: readonly [number, number, number],
   normal: readonly [number, number, number],
+  part: FacadePart,
 ): [number, number] | null {
   if (Math.abs(normal[1]) > 0.5) return null
-  const along = Math.abs(normal[0]) > 0.5 ? world[2] : world[0]
-  return [along / FACADE_TILE_WORLD_W, world[1] / FACADE_TILE_WORLD_H]
+  const floors = facadeFloors(part.h)
+  if (floors === 0) return null
+  const alongZ = Math.abs(normal[0]) > 0.5
+  const width = alongZ ? part.d : part.w
+  const start = (alongZ ? part.z : part.x) - width / 2
+  const along = (alongZ ? world[2] : world[0]) - start
+  const up = world[1] - part.y0
+  const [phaseU, phaseV] = partPhase(part.x, part.z)
+  return [
+    ((along / width) * facadeBays(width) + phaseU) / FACADE_GRID_COLS,
+    ((up / part.h) * floors + phaseV) / FACADE_GRID_ROWS,
+  ]
 }
 
 function srgbChannelToLinear(c: number): number {
@@ -305,10 +353,11 @@ export interface PatchableShader {
 
 /**
  * Patch a MeshStandardMaterial shader (three r180 chunk names) so the facade
- * maps use world-space UVs and roofs show plain wall with no glow. Works with
- * and without instancing. Returns false (and leaves the shader alone) if an
- * expected chunk is missing, so a three upgrade degrades to stretched UVs
- * instead of a broken shader.
+ * maps use per-part fitted UVs (see facadeUvAt) and roofs and short parts show
+ * plain wall with no glow. Reads each part's size and centre from the instance
+ * matrix (axis-aligned unit boxes, scaled). Returns false (and leaves the
+ * shader alone) if an expected chunk is missing, so a three upgrade degrades
+ * to stretched UVs instead of a broken shader.
  */
 export function patchFacadeShader(shader: PatchableShader): boolean {
   const uvChunk = '#include <uv_vertex>'
@@ -327,9 +376,22 @@ export function patchFacadeShader(shader: PatchableShader): boolean {
 		#endif
 		vec3 facadeWorld = ( facadeModel * vec4( position, 1.0 ) ).xyz;
 		vec3 facadeNormal = normalize( mat3( facadeModel ) * normal );
-		vFacadeRoof = abs( facadeNormal.y ) > 0.5 ? 1.0 : 0.0;
-		float facadeAlong = abs( facadeNormal.x ) > 0.5 ? facadeWorld.z : facadeWorld.x;
-		vec2 facadeUv = vec2( facadeAlong / ${glslFloat(FACADE_TILE_WORLD_W)}, facadeWorld.y / ${glslFloat(FACADE_TILE_WORLD_H)} );
+		vec3 partSize = vec3( length( facadeModel[ 0 ].xyz ), length( facadeModel[ 1 ].xyz ), length( facadeModel[ 2 ].xyz ) );
+		vec3 partCentre = facadeModel[ 3 ].xyz;
+		bool facadeAlongZ = abs( facadeNormal.x ) > 0.5;
+		float facadeWidth = facadeAlongZ ? partSize.z : partSize.x;
+		float facadeAlong = ( facadeAlongZ ? facadeWorld.z : facadeWorld.x ) - ( ( facadeAlongZ ? partCentre.z : partCentre.x ) - 0.5 * facadeWidth );
+		float facadeUp = facadeWorld.y - ( partCentre.y - 0.5 * partSize.y );
+		float facadeBays = max( 1.0, floor( facadeWidth / ${glslFloat(FACADE_BAY_WORLD_W)} + 0.5 ) );
+		float facadeFloors = partSize.y >= ${glslFloat(FACADE_MIN_WINDOW_PART_H)} ? max( 1.0, floor( partSize.y / ${glslFloat(FACADE_FLOOR_WORLD_H)} + 0.5 ) ) : 0.0;
+		float facadeHash = fract( sin( partCentre.x * 12.9898 + partCentre.z * 78.233 ) * 43758.5453 );
+		float facadePhaseU = floor( facadeHash * ${glslFloat(FACADE_GRID_COLS)} );
+		float facadePhaseV = floor( fract( facadeHash * 7.31 ) * ${glslFloat(FACADE_GRID_ROWS)} );
+		vFacadeRoof = ( abs( facadeNormal.y ) > 0.5 || facadeFloors < 1.0 ) ? 1.0 : 0.0;
+		vec2 facadeUv = vec2(
+			( facadeAlong / facadeWidth * facadeBays + facadePhaseU ) / ${glslFloat(FACADE_GRID_COLS)},
+			( facadeUp / partSize.y * max( facadeFloors, 1.0 ) + facadePhaseV ) / ${glslFloat(FACADE_GRID_ROWS)}
+		);
 		#ifdef USE_MAP
 			vMapUv = facadeUv;
 		#endif
