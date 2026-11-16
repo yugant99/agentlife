@@ -22,6 +22,7 @@ import { GRADE_EXPOSURE, pipelineSettingsForTier, resolveQualityTier, shotDurati
 import { PostFX } from './postfx'
 import { Haze } from './haze'
 import { WaterGlitter } from './WaterGlitter'
+import { BLACK_HOLE_DIRECTION, DEFAULT_MAX_POLAR, SCENE_FOV_DEG, SHOWCASE_MAX_POLAR } from './showcase'
 
 // ---------------------------------------------------------------------------
 // Mythic City. (File name is retained from the earlier courtyard prototype; the
@@ -37,7 +38,7 @@ import { WaterGlitter } from './WaterGlitter'
 // and reads no agent state.
 // ---------------------------------------------------------------------------
 
-const FOV = 40
+const FOV = SCENE_FOV_DEG
 const CAMERA_DIR = new THREE.Vector3(0.42, 0.5, 0.76).normalize()
 const CITY_TARGET = new THREE.Vector3(0, 8, 0)
 // Camera position matches the city overview for the first frame so there is no intro drift.
@@ -49,10 +50,9 @@ const TRAVEL_CITY = 0.65
 const TRAVEL_AGENT = 0.42
 
 // Station plazas are staffed; the black-hole direction is world-locked so orbit
-// parallaxes around it. The hole sits in the sky band above the skyline.
-// World-locked direction for the city's black hole: low enough that the full
-// silhouette and lensed arch sit inside the sky band above the skyline.
-const BLACK_HOLE_DIRECTION: [number, number, number] = [0.03, 0.21, -1.0]
+// parallaxes around it. The hole sits in the sky band above the skyline; its
+// direction (BLACK_HOLE_DIRECTION) lives in showcase.ts so framing tests can
+// check the showcase poses against the real value.
 
 export interface RenderStats {
   calls: number
@@ -1424,7 +1424,7 @@ function DistrictLabel({ district, assigned, active, onDistrict }: { district: c
 
 const STATION_FACING = 0.5
 
-function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTint, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, quality, shot, onFrameRate, onUserInteract, onSelect, onDistrict, onReady }: {
+function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTint, selectedId, view, focusRevision, paused, reducedMotion, showStats, statsSink, quality, shot, showcase, labels, onFrameRate, onUserInteract, onSelect, onDistrict, onReady }: {
   agents: CityAgent[]
   celebrationBy: Record<string, number>
   shipCount: number
@@ -1433,6 +1433,8 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
   selectedId?: string
   quality: QualityTier
   shot?: CameraShot | null
+  showcase?: boolean
+  labels?: boolean
   onFrameRate?: (fps: number) => void
   onUserInteract?: () => void
   view: city.View
@@ -1582,7 +1584,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
       <TerraceScope />
       <QuayProps />
 
-      {view.scale === 'city' && city.DISTRICTS.map((district) => (
+      {labels !== false && view.scale === 'city' && city.DISTRICTS.map((district) => (
         <DistrictLabel
           key={district.id}
           district={district}
@@ -1611,7 +1613,7 @@ function CourtyardWorld({ agents, celebrationBy, shipCount, workingCount, tramTi
         minDistance={5}
         maxDistance={420}
         minPolarAngle={0.22}
-        maxPolarAngle={1.42}
+        maxPolarAngle={showcase ? SHOWCASE_MAX_POLAR : DEFAULT_MAX_POLAR}
       />
       <StatsReporter sink={statsSink} enabled={showStats} />
       <FrameRateReporter onFrameRate={onFrameRate} />

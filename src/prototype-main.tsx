@@ -20,6 +20,7 @@ import {
   startTourState, stopTourState,
 } from './components/prototype/tour'
 import type { TourState } from './components/prototype/tour'
+import { SHOWCASE_RESUME_MS, parseShowcaseFlag, showcaseQuality, showcaseShot } from './components/prototype/showcase'
 import {
   DWELL_MS, advanceScenario, createScenario, isFinished, resetScenario,
 } from './components/prototype/scenario'
@@ -84,6 +85,10 @@ function PrototypeApp() {
   )
   const webgl = useMemo(() => supportsWebGL(), [])
   const debug = useMemo(() => readDebugFlag(), [])
+  // ?showcase=1: recording mode. HUD hidden (H toggles it), simulated day only,
+  // steady quality tier, slow skyline camera reel. See showcase.ts.
+  const showcase = useMemo(() => parseShowcaseFlag(readSearch()), [])
+  const [hudVisible, setHudVisible] = useState(false)
   const statsSink = useRef<RenderStats>({ calls: 0, triangles: 0, frameMs: 0, width: 0, height: 0, pixelRatio: 1 })
 
   const feed = useCityFeed()
@@ -92,10 +97,11 @@ function PrototypeApp() {
   const hasLiveSnapshot = liveSnapshot !== null
   // Live is the default once the feed reports live with a snapshot. Losing the
   // feed keeps the last snapshot (it ages by wall-clock time in the hook) and
-  // never silently switches back to simulation.
+  // never silently switches back to simulation. Showcase never auto-switches:
+  // a recording must not put live workspace names on screen.
   useEffect(() => {
-    if (!hasChosenSource && liveReady) setSource('live')
-  }, [hasChosenSource, liveReady])
+    if (!showcase && !hasChosenSource && liveReady) setSource('live')
+  }, [showcase, hasChosenSource, liveReady])
   const isLive = source === 'live' && hasLiveSnapshot
   const livePaused = isLive && feed.status !== 'live'
 
@@ -136,12 +142,12 @@ function PrototypeApp() {
 
   // --- Wave 3 Lane 3C: quality ladder, arrival glide, attract tour ------------
   const search = useMemo(() => readSearch(), [])
-  const pinnedQuality = useMemo(() => parseQualityOverride(search), [search])
+  const pinnedQuality = useMemo(() => showcaseQuality(parseQualityOverride(search), showcase), [search, showcase])
   const attractForced = useMemo(() => parseAttractFlag(search), [search])
   const [seenIntro] = useState(() => readIntroSeen(safeSessionStorage()))
   const skipIntro = useMemo(
-    () => shouldSkipIntro({ search, reducedMotion, seen: seenIntro }) || attractForced,
-    [search, reducedMotion, seenIntro, attractForced],
+    () => shouldSkipIntro({ search, reducedMotion, seen: seenIntro }) || attractForced || showcase,
+    [search, reducedMotion, seenIntro, attractForced, showcase],
   )
 
   // Tier ladder: smoothed fps from the scene folds into the pure machine; only
@@ -174,11 +180,20 @@ function PrototypeApp() {
     setShot((current) => (current && current.id.startsWith('tour-') ? null : current))
   }, [])
 
-  // Any user input yields the tour immediately and releases the camera.
+  // Showcase reel: null while released to the user, else the current step.
+  const [reelStep, setReelStep] = useState<number | null>(null)
+  const reelSeq = useRef(0)
+  const releaseReel = useCallback(() => {
+    setReelStep((current) => (current === null ? current : null))
+    setShot((current) => (current && current.id.startsWith('showcase-') ? null : current))
+  }, [])
+
+  // Any user input yields the tour (and the showcase reel) and releases the camera.
   const bumpActivity = useCallback(() => {
     lastActivity.current = Date.now()
     stopTouring()
-  }, [stopTouring])
+    releaseReel()
+  }, [stopTouring, releaseReel])
 
   const tourQueue = useMemo(() => buildTourQueue(agents), [agents])
 
@@ -213,8 +228,9 @@ function PrototypeApp() {
 
   // Idle watch: 60 s without input (or ?attract=1) starts the tour once ready.
   // Reduced motion and pause keep a readable still scene, so no tour there.
+  // Showcase runs its own reel instead of the district tour.
   useEffect(() => {
-    if (!ready || !webgl) return
+    if (!ready || !webgl || showcase) return
     if (reducedMotion || !playing) {
       stopTouring()
       return
@@ -226,7 +242,37 @@ function PrototypeApp() {
       }
     }, 1000)
     return () => window.clearInterval(id)
-  }, [ready, webgl, reducedMotion, playing, tour.active, attractForced, stopTouring])
+  }, [ready, webgl, showcase, reducedMotion, playing, tour.active, attractForced, stopTouring])
+
+  // Showcase reel: once ready the camera eases to the first skyline pose, then
+  // drifts between poses. Reduced motion holds the first pose (the rig snaps).
+  // User input releases the camera; the reel takes it back after a short idle.
+  const reelStarted = useRef(false)
+  useEffect(() => {
+    if (!showcase || !ready || !webgl || reelStarted.current) return
+    reelStarted.current = true
+    setReelStep(0)
+  }, [showcase, ready, webgl])
+
+  useEffect(() => {
+    if (!showcase || !ready || !webgl || reelStep !== null || !reelStarted.current) return
+    const id = window.setInterval(() => {
+      if (idleDue(lastActivity.current, Date.now(), SHOWCASE_RESUME_MS)) setReelStep(0)
+    }, 500)
+    return () => window.clearInterval(id)
+  }, [showcase, ready, webgl, reelStep])
+
+  useEffect(() => {
+    if (reelStep === null) return
+    reelSeq.current += 1
+    const next = showcaseShot(reelStep, reelSeq.current)
+    setShot(next)
+    if (reducedMotion) return
+    const id = window.setTimeout(() => {
+      setReelStep((current) => (current === null ? current : current + 1))
+    }, next.durationMs)
+    return () => window.clearTimeout(id)
+  }, [reelStep, reducedMotion])
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -245,6 +291,13 @@ function PrototypeApp() {
     const id = window.setTimeout(() => setState((current) => advanceScenario(current)), DWELL_MS)
     return () => window.clearTimeout(id)
   }, [playing, state, isLive])
+
+  // Showcase loops the simulated day so a long recording never goes quiet.
+  useEffect(() => {
+    if (!showcase || isLive || !playing || !isFinished(state)) return
+    const id = window.setTimeout(() => setState(resetScenario()), DWELL_MS * 3)
+    return () => window.clearTimeout(id)
+  }, [showcase, isLive, playing, state])
 
   const goCity = useCallback(() => {
     setSelectedId(undefined)
@@ -308,12 +361,17 @@ function PrototypeApp() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // H toggles the HUD in showcase without taking the camera from the reel.
+      if (showcase && (event.key === 'h' || event.key === 'H')) {
+        setHudVisible((value) => !value)
+        return
+      }
       bumpActivity()
       if (event.key === 'Escape') escape()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [escape, bumpActivity])
+  }, [escape, bumpActivity, showcase])
 
   return (
     <main className="proto-app" onPointerDown={bumpActivity}>
@@ -342,6 +400,8 @@ function PrototypeApp() {
             statsSink={statsSink}
             quality={quality}
             shot={shot}
+            showcase={showcase}
+            labels={!showcase || hudVisible}
             onFrameRate={handleFrameRate}
             onUserInteract={bumpActivity}
             onSelect={selectAgent}
@@ -355,7 +415,7 @@ function PrototypeApp() {
           <p>WebGL is not available in this browser. The roster and inspector still describe every agent.</p>
         </div>
       )}
-      <CourtyardHud
+      {(!showcase || hudVisible) && <CourtyardHud
         agents={agents}
         lastEvent={lastEvent}
         playing={playing}
@@ -377,7 +437,7 @@ function PrototypeApp() {
         onStep={step}
         onNeedsYou={needsYou}
         onSource={handleSource}
-      />
+      />}
       {webgl && !ready && <div className="proto-loading" role="status">Preparing the city…</div>}
     </main>
   )

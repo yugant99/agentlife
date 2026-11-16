@@ -43,4 +43,8 @@ export interface SceneControlProps {
   onFrameRate?: (fps: number) => void
   /** Any user camera input (drag, wheel, touch), so a tour can yield immediately. */
   onUserInteract?: () => void
+  /** Showcase mode (showcase.ts): loosens the orbit limit so skyline shots can frame the sky. */
+  showcase?: boolean
+  /** District name tags over the city view; absent means shown. */
+  labels?: boolean
 }
