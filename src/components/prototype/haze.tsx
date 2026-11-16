@@ -8,12 +8,19 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import * as city from './city'
 import { effectCountForDensity } from './grade'
+import { patchConeFadeShader } from './coneFade'
 
 const HAZE_Y = 1.4
 const CONE_HEIGHT = 5
 const HAZE_OPACITY = 0.09
 const CONE_OPACITY = 0.08
 const AO_OPACITY = 0.42
+
+// Lamp cones fade out near the camera (coneFade.ts): soft glow from afar, no
+// solid beige cones at agent zoom. Module-level so the program is shared.
+function applyConeFade(shader: { vertexShader: string; fragmentShader: string }): void {
+  patchConeFadeShader(shader)
+}
 
 function makeRadialTexture(): THREE.CanvasTexture | null {
   try {
@@ -193,6 +200,7 @@ export function Haze({ density = 1, animate = true }: {
           blending={THREE.AdditiveBlending}
           depthWrite={false}
           side={THREE.DoubleSide}
+          onBeforeCompile={applyConeFade}
         />
       </instancedMesh>
       <instancedMesh ref={aoMesh} args={[undefined, undefined, Math.max(1, aoSpots.length)]} renderOrder={1} frustumCulled={false}>
