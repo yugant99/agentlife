@@ -46,11 +46,13 @@ export interface ShowcasePose {
 
 // Skyline poses from the south (+z) looking north, aimed straight at the hole
 // (yaw ~1.7 degrees east) and pitched two degrees up so the arcs clear the top
-// edge with margin. The camera sits west of centre so the hero needle (15, 15)
-// stands to the right of the hole. The drift is a slow dolly in and down.
+// edge with margin. The camera sits well west of centre so the two tall towers,
+// the CN Tower (-17, 45) and the hero needle (15, 15), stand to the right of
+// the hole against its arc instead of cutting through it. The drift is a slow
+// dolly in and down.
 export const SHOWCASE_POSES: readonly ShowcasePose[] = [
-  { position: [-30, 45, 170], target: [-25.5, 50.24, 20.16] },
-  { position: [-24, 36, 150], target: [-19.5, 41.24, 0.16] },
+  { position: [-40, 45, 170], target: [-35.5, 50.24, 20.16] },
+  { position: [-36, 36, 150], target: [-31.5, 41.24, 0.16] },
 ]
 
 /** `?showcase=1` turns showcase mode on. */

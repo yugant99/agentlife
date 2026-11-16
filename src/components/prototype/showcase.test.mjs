@@ -19,6 +19,9 @@ import {
   showcaseQuality,
   showcaseShot,
 } from './showcase.ts'
+import { placementFor } from './toronto.ts'
+import { LANDMARKS } from './landmarks/landmarkTypes.ts'
+import { HERO_CELL, HERO_HEIGHT, HERO_SPIRE_HEIGHT } from './city.ts'
 
 test('flag parsing: only showcase=1 turns it on', () => {
   assert.equal(parseShowcaseFlag('?showcase=1'), true)
@@ -88,6 +91,24 @@ test('square crops keep the core and clip the arc tips evenly', () => {
     assert.ok(Math.abs(right) + BLACK_HOLE_CORE_DEG <= halfSquare, `core ${right} outside a square crop`)
     // Aimed at the hole, so any clipping of the arc tips is symmetric.
     assert.ok(Math.abs(right) <= 1, `hole ${right} degrees off centre`)
+  }
+})
+
+test('no tall tower cuts through the hole at any pose', () => {
+  const cn = placementFor('cn-tower')
+  const cnSpec = LANDMARKS.find((spec) => spec.id === 'cn-tower')
+  const towers = [
+    { name: 'CN Tower', x: cn.x, z: cn.z, top: cnSpec.height * cn.scale },
+    { name: 'hero needle', x: HERO_CELL[0], z: HERO_CELL[1], top: HERO_HEIGHT + HERO_SPIRE_HEIGHT },
+  ]
+  for (const pose of SHOWCASE_POSES) {
+    const hole = directionInView(pose, BLACK_HOLE_DIRECTION)
+    for (const tower of towers) {
+      const tip = directionInView(pose, [tower.x - pose.position[0], tower.top - pose.position[1], tower.z - pose.position[2]])
+      const belowCore = tip.up < hole.up - BLACK_HOLE_CORE_DEG
+      const beside = Math.abs(tip.right - hole.right) >= BLACK_HOLE_CORE_DEG + 3
+      assert.ok(belowCore || beside, `${tower.name} crosses the hole at pose ${pose.position} (${(tip.right - hole.right).toFixed(1)} degrees off)`)
+    }
   }
 })
 
